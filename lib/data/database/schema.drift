@@ -1,0 +1,105 @@
+-- Схема ядра. Деньги и курсы хранятся как TEXT; проверки используют Decimal.
+
+CREATE TABLE currency (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  code TEXT NOT NULL UNIQUE, kind TEXT NOT NULL CHECK(kind IN ('fiat','crypto')),
+  precision INTEGER NOT NULL CHECK(precision BETWEEN 0 AND 18),
+  name TEXT NOT NULL, rate_source TEXT NOT NULL
+);
+
+CREATE TABLE liquidity_level (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, color INTEGER NOT NULL
+);
+
+CREATE TABLE storage (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  name TEXT NOT NULL, type TEXT NOT NULL,
+  liquidity_id TEXT NOT NULL REFERENCES liquidity_level(id),
+  organization TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+  archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)), sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE storage_currency (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  storage_id TEXT NOT NULL REFERENCES storage(id), currency_id TEXT NOT NULL REFERENCES currency(id),
+  active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)), UNIQUE(storage_id, currency_id)
+);
+
+CREATE TABLE snapshot (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  date TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','fixed')),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE snapshot_line (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  snapshot_id TEXT NOT NULL REFERENCES snapshot(id),
+  storage_id TEXT NOT NULL REFERENCES storage(id), currency_id TEXT NOT NULL REFERENCES currency(id),
+  liquidity_id TEXT NOT NULL REFERENCES liquidity_level(id),
+  amount TEXT CHECK(amount IS NULL OR delta_decimal_valid(amount)),
+  family_amount TEXT NOT NULL DEFAULT '0' CHECK(delta_decimal_valid(family_amount)),
+  note TEXT NOT NULL DEFAULT '', confirmed INTEGER NOT NULL DEFAULT 0 CHECK(confirmed IN (0,1)),
+  CHECK(amount IS NULL OR delta_decimal_le(family_amount,amount)),
+  UNIQUE(snapshot_id, storage_id, currency_id)
+);
+
+CREATE TABLE snapshot_rate (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  snapshot_id TEXT NOT NULL REFERENCES snapshot(id), currency_id TEXT NOT NULL REFERENCES currency(id),
+  rate TEXT NOT NULL CHECK(delta_decimal_positive(rate)), source TEXT NOT NULL,
+  fetched_at TEXT NOT NULL, UNIQUE(snapshot_id,currency_id)
+);
+
+CREATE TABLE audit_log (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  snapshot_id TEXT NOT NULL REFERENCES snapshot(id), entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL, operation TEXT NOT NULL, old_value TEXT NOT NULL, new_value TEXT NOT NULL,
+  changed_at TEXT NOT NULL
+);
+
+CREATE TABLE settings (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  name TEXT NOT NULL UNIQUE, value TEXT NOT NULL
+);
+
+CREATE TABLE rate_cache (
+  id TEXT NOT NULL PRIMARY KEY CHECK(length(id) = 36),
+  updated_at TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+  currency_id TEXT NOT NULL REFERENCES currency(id), date TEXT NOT NULL,
+  rate TEXT NOT NULL CHECK(delta_decimal_positive(rate)), source TEXT NOT NULL,
+  UNIQUE(currency_id,date,source)
+);
+
+CREATE INDEX snapshot_line_parent ON snapshot_line(snapshot_id);
+CREATE INDEX audit_log_parent ON audit_log(snapshot_id, changed_at);

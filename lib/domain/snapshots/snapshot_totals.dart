@@ -38,12 +38,14 @@ final class SnapshotTotals {
   const SnapshotTotals({
     required this.rubles,
     required this.byCurrency,
+    required this.byCurrencyRubles,
     required this.byStorageRubles,
     required this.byLiquidityRubles,
   });
 
   final AmountTotals rubles;
   final Map<String, AmountTotals> byCurrency;
+  final Map<String, AmountTotals> byCurrencyRubles;
   final Map<String, AmountTotals> byStorageRubles;
   final Map<String, AmountTotals> byLiquidityRubles;
 }
@@ -57,6 +59,7 @@ SnapshotTotals calculateTotals(
   final zero = AmountTotals(total: Decimal.zero, family: Decimal.zero);
   var rubles = zero;
   final byCurrency = <String, AmountTotals>{};
+  final byCurrencyRubles = <String, AmountTotals>{};
   final byStorage = <String, AmountTotals>{};
   final byLiquidity = <String, AmountTotals>{};
   final seen = <(String, String)>{};
@@ -80,6 +83,11 @@ SnapshotTotals calculateTotals(
     final amount = line.amount * rate;
     final family = line.familyAmount * rate;
     rubles = rubles.add(amount, family);
+    byCurrencyRubles.update(
+      line.currencyCode,
+      (old) => old.add(amount, family),
+      ifAbsent: () => zero.add(amount, family),
+    );
     byCurrency.update(
       line.currencyCode,
       (old) => old.add(line.amount, line.familyAmount),
@@ -99,6 +107,7 @@ SnapshotTotals calculateTotals(
   return SnapshotTotals(
     rubles: rubles,
     byCurrency: Map.unmodifiable(byCurrency),
+    byCurrencyRubles: Map.unmodifiable(byCurrencyRubles),
     byStorageRubles: Map.unmodifiable(byStorage),
     byLiquidityRubles: Map.unmodifiable(byLiquidity),
   );

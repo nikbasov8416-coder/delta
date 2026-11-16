@@ -4,6 +4,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Любая устанавливаемая сборка использует только постоянный ключ владельца.
+fun requiredSigningEnv(name: String): String =
+    System.getenv(name)?.takeIf { it.isNotBlank() }
+        ?: throw GradleException("Не настроена постоянная подпись Android: $name. См. docs/ANDROID_SIGNING.md")
+
+
 android {
     namespace = "local.delta.delta"
     compileSdk = flutter.compileSdkVersion
@@ -28,7 +34,18 @@ android {
         versionName = flutter.versionName
     }
 
-    // Этап 1: только debug; release-подпись — этап 6.
+    signingConfigs {
+        create("owner") {
+            storeFile = file(requiredSigningEnv("DELTA_ANDROID_KEYSTORE_PATH"))
+            storePassword = requiredSigningEnv("DELTA_ANDROID_STORE_PASSWORD")
+            keyAlias = requiredSigningEnv("DELTA_ANDROID_KEY_ALIAS")
+            keyPassword = requiredSigningEnv("DELTA_ANDROID_KEY_PASSWORD")
+        }
+    }
+    buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("owner") }
+        getByName("release") { signingConfig = signingConfigs.getByName("owner") }
+    }
 
 }
 

@@ -4,8 +4,36 @@ import 'dart:typed_data';
 import 'package:delta/data/database/app_database.dart';
 import 'package:delta/data/database/encrypted_connection.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart';
 
 void main() {
+  test('Один setup повторно открывает тот же файл правильным ключом', () async {
+    final directory = await Directory.systemTemp.createTemp('delta-reconnect-');
+    addTearDown(() => directory.delete(recursive: true));
+    final setup = encryptedSetup(
+      Uint8List.fromList(List.generate(32, (i) => i + 1)),
+    );
+    final path = '${directory.path}/synthetic.db';
+    final first = sqlite3.open(path);
+    try {
+      setup(first);
+      first.execute('CREATE TABLE sample (value TEXT)');
+      first.execute("INSERT INTO sample VALUES ('synthetic')");
+    } finally {
+      first.close();
+    }
+    final second = sqlite3.open(path);
+    try {
+      setup(second);
+      expect(
+        second.select('SELECT value FROM sample').single['value'],
+        'synthetic',
+      );
+    } finally {
+      second.close();
+    }
+  });
+
   test(
     'SQLCipher: файл зашифрован, верный ключ читает, неверный — нет',
     () async {

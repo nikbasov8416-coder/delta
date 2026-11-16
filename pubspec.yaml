@@ -18,6 +18,11 @@ dependencies:
   decimal: 3.2.6
   drift: 2.35.4
   sqlite3: 3.9.1
+  flutter_secure_storage: 11.2.0
+  local_auth: 3.0.2
+  cryptography: 2.9.0
+  path_provider: 2.1.6
+  uuid: 4.6.0
 
 dev_dependencies:
   flutter_test:

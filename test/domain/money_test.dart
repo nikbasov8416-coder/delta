@@ -37,8 +37,19 @@ void main() {
     );
   });
 
+  test('Запятая и пробелы нормализуются', () {
+    for (final value in [
+      '1 234,56',
+      '1\u00a0234,56',
+      '1\u202f234.56',
+      ' 1234,56 ',
+    ]) {
+      expect(parseAmount(value, Currency('RUB', 2)), Decimal.parse('1234.56'));
+    }
+  });
+
   test('Неверный ввод не превращается в деньги', () {
-    for (final value in ['-1', 'NaN', '1e6', '1,50', ' 1', '']) {
+    for (final value in ['-1', 'NaN', '1e6', '1,2.3', '1 23', '']) {
       expect(
         () => parseAmount(value, Currency('RUB', 2)),
         throwsFormatException,

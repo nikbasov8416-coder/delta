@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'navigation/app_router.dart';
+import 'security/session_gate.dart';
 
 class DeltaApp extends ConsumerWidget {
   const DeltaApp({super.key});
@@ -9,6 +10,8 @@ class DeltaApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) => MaterialApp.router(
     title: 'Delta',
+    builder: (context, child) =>
+        SessionGate(child: child ?? const SizedBox.shrink()),
     locale: const Locale('ru'),
     supportedLocales: const [Locale('ru')],
     localizationsDelegates: GlobalMaterialLocalizations.delegates,

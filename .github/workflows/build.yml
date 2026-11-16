@@ -40,9 +40,10 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze --no-pub --fatal-infos
       - run: flutter test --no-pub --reporter expanded
+      - run: python3 -m unittest discover -s tool -p "test_*.py"
 
   android:
-    name: Android debug APK
+    name: Android signed APK
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -61,12 +62,28 @@ jobs:
           cache: true
       - run: flutter pub get --enforce-lockfile
       # Android SDK берётся с runner GitHub; на личный сервер не ставится.
-      # Debug APK имеет временную стандартную debug-подпись, без ключа владельца.
-      - run: flutter build apk --debug --no-pub
+      - name: Проверить секреты и подготовить постоянную подпись
+        env:
+          DELTA_ANDROID_KEYSTORE_BASE64: ${{ secrets.DELTA_ANDROID_KEYSTORE_BASE64 }}
+          DELTA_ANDROID_STORE_PASSWORD: ${{ secrets.DELTA_ANDROID_STORE_PASSWORD }}
+          DELTA_ANDROID_KEY_ALIAS: ${{ secrets.DELTA_ANDROID_KEY_ALIAS }}
+          DELTA_ANDROID_KEY_PASSWORD: ${{ secrets.DELTA_ANDROID_KEY_PASSWORD }}
+          DELTA_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/delta-signing.jks
+        run: python3 tool/prepare_android_signing.py
+      - name: Собрать APK постоянным ключом
+        env:
+          DELTA_ANDROID_STORE_PASSWORD: ${{ secrets.DELTA_ANDROID_STORE_PASSWORD }}
+          DELTA_ANDROID_KEY_ALIAS: ${{ secrets.DELTA_ANDROID_KEY_ALIAS }}
+          DELTA_ANDROID_KEY_PASSWORD: ${{ secrets.DELTA_ANDROID_KEY_PASSWORD }}
+          DELTA_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/delta-signing.jks
+        run: flutter build apk --release --no-pub --build-number=${{ github.run_number }}
+      - name: Удалить временный keystore
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/delta-signing.jks"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Delta-android-debug
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: Delta-android
+          path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7
 
