@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../data/database/app_database.dart';
+import '../data/rates/source_gateway.dart';
+import '../data/rates/transport.dart';
+import '../domain/rates/rates.dart';
 import '../data/database/encrypted_connection.dart';
 import '../data/finance_repository.dart';
 import '../data/security/secret_store.dart';
@@ -35,12 +38,19 @@ final pinServiceProvider = Provider<PinService>((ref) {
 });
 
 // Этот провайдер читают только экраны внутри открытой сессии.
+final rateGatewayProvider = Provider.autoDispose<RateGateway>((ref) {
+  final transport = SourceHttpTransport();
+  ref.onDispose(transport.close);
+  return PublicRateGateway(transport);
+});
+
 final repositoryProvider = FutureProvider<FinanceRepository>((ref) async {
   // Проверка нужна и при прямом чтении провайдера, и во время снятия экранов
   // после блокировки: старые подписки не должны заново открыть базу.
   if (!ref.watch(sessionAccessProvider)) throw StateError('Сессия закрыта');
   final store = ref.watch(secretStoreProvider);
   final keys = VaultKeys(store);
+  final gateway = ref.watch(rateGatewayProvider);
   AppDatabase? database;
   var disposed = false;
   ref.onDispose(() {
@@ -58,7 +68,11 @@ final repositoryProvider = FutureProvider<FinanceRepository>((ref) async {
   } finally {
     key.fillRange(0, key.length, 0);
   }
-  final repository = DriftFinanceRepository(database, deviceId);
+  final repository = DriftFinanceRepository(
+    database,
+    deviceId,
+    gateway: gateway,
+  );
   try {
     await repository.initialize();
     if (disposed) throw StateError('Сессия закрыта');

@@ -152,6 +152,8 @@ void main() {
         archived: false,
         currencyIds: [currency('RUB')],
       );
+      await repo.saveRate(previous, currency('USD'), '2');
+      await repo.finalizeSnapshot(previous);
       final next = await repo.createSnapshot('2026-01-02', '');
       var detail = await repo.snapshot(next);
       expect(detail.lines.length, 1);

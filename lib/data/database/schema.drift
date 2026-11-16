@@ -70,7 +70,8 @@ CREATE TABLE snapshot_rate (
   deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
   snapshot_id TEXT NOT NULL REFERENCES snapshot(id), currency_id TEXT NOT NULL REFERENCES currency(id),
   rate TEXT NOT NULL CHECK(delta_decimal_positive(rate)), source TEXT NOT NULL,
-  fetched_at TEXT NOT NULL, UNIQUE(snapshot_id,currency_id)
+  fetched_at TEXT NOT NULL, rate_date TEXT NOT NULL DEFAULT '',
+  effective_at TEXT NOT NULL DEFAULT '', UNIQUE(snapshot_id,currency_id)
 );
 
 CREATE TABLE audit_log (
@@ -98,6 +99,7 @@ CREATE TABLE rate_cache (
   deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
   currency_id TEXT NOT NULL REFERENCES currency(id), date TEXT NOT NULL,
   rate TEXT NOT NULL CHECK(delta_decimal_positive(rate)), source TEXT NOT NULL,
+  fetched_at TEXT NOT NULL DEFAULT '', effective_at TEXT NOT NULL DEFAULT '',
   UNIQUE(currency_id,date,source)
 );
 

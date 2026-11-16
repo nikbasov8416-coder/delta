@@ -10,11 +10,15 @@ import 'package:material_ui/material_ui.dart';
 import '../../domain/finance/finance_repository.dart';
 import '../../domain/finance/records.dart';
 import '../../domain/snapshots/snapshot_totals.dart';
+import '../../domain/rates/rates.dart';
 import '../navigation/app_routes.dart';
 import '../providers.dart';
+import 'rate_refresh_button.dart';
 
 String friendlyError(Object error) => switch (error) {
   FormatException e => e.message,
+  ArgumentError e => e.message?.toString() ?? 'Проверьте введённые значения',
+  RateFailure e => e.message,
   StateError e => e.message,
   _ =>
     'Не удалось выполнить действие. Проверьте данные; изменения не сохранены.',
@@ -627,6 +631,44 @@ class SnapshotScreen extends ConsumerWidget {
                     : detail.lines.where((l) => l.flag('confirmed')).length /
                           detail.lines.length,
               ),
+              if (detail.header.text('status') == 'draft')
+                TextButton(
+                  onPressed: () async {
+                    final yes = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text(
+                          'Точно подтвердить все непроверенные?',
+                        ),
+                        content: const Text(
+                          'Подтвердятся только строки с уже заполненными суммами. Пустые строки нужно заполнить отдельно.',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Отмена'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('Да, подтвердить'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (yes != true) return;
+                    try {
+                      await (await _repo(ref)).confirmUnreviewed(id);
+                      refreshFinance(ref, id);
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(friendlyError(e))),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Подтвердить все непроверенные'),
+                ),
               if (detail.header.text('status') == 'fixed')
                 const Text(
                   'Изменения сумм, курсов, даты и заметок записываются в историю.',
@@ -656,7 +698,15 @@ class SnapshotScreen extends ConsumerWidget {
                 'Курсы к рублю',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              const Text('На этом этапе вводятся вручную. RUB = 1.'),
+              const Text(
+                'Автоматические курсы на дату слепка. При сбое доступен ручной ввод. RUB = 1.',
+              ),
+              RateRefreshButton(
+                id: id,
+                fixed: detail.header.text('status') == 'fixed',
+              ),
+              for (final error in detail.rateErrors.entries)
+                Text('${error.key}: ${error.value}'),
               for (final currencyId
                   in detail.lines.map((l) => l.text('currency_id')).toSet())
                 _rate(context, ref, detail, currencyId),
@@ -707,11 +757,13 @@ class SnapshotScreen extends ConsumerWidget {
       'source': 'Источник',
       'fetched_at': 'Время ввода',
       'confirmed': 'Подтверждено',
+      'rate_date': 'Дата курса слепка',
+      'effective_at': 'Действует / наблюдение',
     };
     String display(String key, Object? value) {
       if (value == null || value == '') return '—';
       if (key == 'source') {
-        return value == 'manual' ? 'Вручную' : 'Постоянный курс';
+        return rateSourceLabel(value.toString());
       }
       if (key == 'confirmed') return value == 1 ? 'Да' : 'Нет';
       if (['amount', 'family_amount', 'rate'].contains(key)) {
@@ -768,7 +820,32 @@ class SnapshotScreen extends ConsumerWidget {
                 subtitle: Text(
                   'Семейные: ${formatMoney(line.decimal('family_amount'), precision: line.number('precision'))}',
                 ),
-                trailing: const Icon(Icons.edit),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (detail.header.text('status') == 'draft' &&
+                        !line.flag('confirmed'))
+                      TextButton(
+                        key: ValueKey('confirm-${line.id}'),
+                        onPressed: line.values['amount'] == null
+                            ? null
+                            : () async {
+                                try {
+                                  await (await _repo(ref)).confirmLine(line.id);
+                                  refreshFinance(ref, id);
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(friendlyError(e))),
+                                    );
+                                  }
+                                }
+                              },
+                        child: const Text('✓ без изменений'),
+                      ),
+                    const Icon(Icons.edit),
+                  ],
+                ),
                 onTap: () => editDialog(
                   context,
                   'Остаток · ${line.text('code')}',
@@ -861,7 +938,7 @@ class SnapshotScreen extends ConsumerWidget {
       subtitle: Text(
         value.isEmpty
             ? 'Введите курс'
-            : '${value.replaceAll('.', ',')} ₽ · ${line.text('code') == 'RUB' ? 'постоянный' : 'вручную'}',
+            : '${value.replaceAll('.', ',')} ₽ · ${matches.isEmpty ? 'Постоянный курс' : rateSourceLabel(matches.first.text('source'))}\n${matches.isEmpty ? '' : rateRecordInfo(matches.first)}',
       ),
       trailing: line.text('code') == 'RUB' ? null : const Icon(Icons.edit),
       onTap: line.text('code') == 'RUB'
@@ -886,72 +963,136 @@ class SnapshotScreen extends ConsumerWidget {
   }
 }
 
-class TotalsView extends ConsumerWidget {
+class TotalsView extends ConsumerStatefulWidget {
   const TotalsView({required this.id, super.key});
   final String id;
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TotalsView> createState() => _TotalsViewState();
+}
+
+class _TotalsViewState extends ConsumerState<TotalsView> {
+  bool _today = false, _force = false;
+  SnapshotDetail? _data;
+  Future<SnapshotValuation>? _future;
+  String get id => widget.id;
+  @override
+  void didUpdateWidget(covariant TotalsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id != id) {
+      _today = false;
+      _future = null;
+      _data = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final detail = ref.watch(snapshotProvider(id));
     return detail.when(
       loading: () => const LinearProgressIndicator(),
       error: (e, _) => Text(friendlyError(e)),
-      data: (data) => FutureBuilder<SnapshotTotals>(
-        future: ref.read(repositoryProvider.future).then((r) => r.totals(id)),
-        builder: (context, state) {
-          if (state.hasError) return Text(friendlyError(state.error!));
-          if (!state.hasData) return const LinearProgressIndicator();
-          final totals = state.data!;
-          Widget line(String label, AmountTotals value) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Text(
-              '$label: ${formatMoney(value.total)} ₽ · семейные ${formatMoney(value.family)} ₽ · личные ${formatMoney(value.personal)} ₽',
+      data: (data) {
+        if (_future == null || !identical(_data, data)) {
+          _data = data;
+          final today = _today, force = _force;
+          _force = false;
+          _future = ref
+              .read(repositoryProvider.future)
+              .then((r) => r.valuation(id, today: today, force: force));
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('По курсу слепка')),
+                ButtonSegment(value: true, label: Text('По сегодняшнему')),
+              ],
+              selected: {_today},
+              onSelectionChanged: (selection) => setState(() {
+                _today = selection.single;
+                _future = null;
+              }),
             ),
-          );
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Итоги', style: Theme.of(context).textTheme.titleLarge),
-              line('Всего', totals.rubles),
-              const Text('По валютам'),
-              for (final entry in totals.byCurrency.entries)
-                Column(
+            if (_today)
+              TextButton(
+                onPressed: () => setState(() {
+                  _force = true;
+                  _future = null;
+                }),
+                child: const Text('Обновить сегодняшние курсы'),
+              ),
+            FutureBuilder<SnapshotValuation>(
+              future: _future,
+              builder: (context, state) {
+                if (state.hasError) return Text(friendlyError(state.error!));
+                if (!state.hasData) return const LinearProgressIndicator();
+                final totals = state.data!.totals;
+                Widget line(String label, AmountTotals value) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Text(
+                    '$label: ${formatMoney(value.total)} ₽ · семейные ${formatMoney(value.family)} ₽ · личные ${formatMoney(value.personal)} ₽',
+                  ),
+                );
+                return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${entry.key}: ${formatMoney(entry.value.total, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · семейные ${formatMoney(entry.value.family, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · личные ${formatMoney(entry.value.personal, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))}',
+                      'Итоги',
+                      style: Theme.of(context).textTheme.titleLarge,
                     ),
-                    line('В рублях', totals.byCurrencyRubles[entry.key]!),
+                    line('Всего', totals.rubles),
+                    for (final quote in state.data!.rates)
+                      Text(
+                        '${quote.code}: ${quote.value.toString().replaceAll('.', ',')} ₽ · ${rateSourceLabel(quote.source)}${quote.cached ? ' · кэш' : ''}\nДействует / наблюдение: ${quote.effectiveAt}; получен ${quote.fetchedAt.toLocal()}',
+                      ),
+                    const Text('По валютам'),
+                    for (final entry in totals.byCurrency.entries)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${entry.key}: ${formatMoney(entry.value.total, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · семейные ${formatMoney(entry.value.family, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · личные ${formatMoney(entry.value.personal, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))}',
+                          ),
+                          line('В рублях', totals.byCurrencyRubles[entry.key]!),
+                        ],
+                      ),
+                    const Divider(),
+                    const Text('По местам хранения'),
+                    for (final entry in totals.byStorageRubles.entries) ...[
+                      line(
+                        data.lines
+                            .firstWhere(
+                              (l) => l.text('storage_id') == entry.key,
+                            )
+                            .text('storage_name'),
+                        entry.value,
+                      ),
+                      for (final row in data.lines.where(
+                        (l) => l.text('storage_id') == entry.key,
+                      ))
+                        Text(
+                          '${row.text('code')}: ${formatMoney(row.decimal('amount'), precision: row.number('precision'))}',
+                        ),
+                    ],
+                    const Divider(),
+                    const Text('По ликвидности'),
+                    for (final entry in totals.byLiquidityRubles.entries)
+                      line(
+                        data.lines
+                            .firstWhere(
+                              (l) => l.text('liquidity_id') == entry.key,
+                            )
+                            .text('liquidity_name'),
+                        entry.value,
+                      ),
                   ],
-                ),
-              const Divider(),
-              const Text('По местам хранения'),
-              for (final entry in totals.byStorageRubles.entries) ...[
-                line(
-                  data.lines
-                      .firstWhere((l) => l.text('storage_id') == entry.key)
-                      .text('storage_name'),
-                  entry.value,
-                ),
-                for (final row in data.lines.where(
-                  (l) => l.text('storage_id') == entry.key,
-                ))
-                  Text(
-                    '${row.text('code')}: ${formatMoney(row.decimal('amount'), precision: row.number('precision'))}',
-                  ),
-              ],
-              const Divider(),
-              const Text('По ликвидности'),
-              for (final entry in totals.byLiquidityRubles.entries)
-                line(
-                  data.lines
-                      .firstWhere((l) => l.text('liquidity_id') == entry.key)
-                      .text('liquidity_name'),
-                  entry.value,
-                ),
-            ],
-          );
-        },
-      ),
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1093,9 +1234,7 @@ class _SecuritySettingsState extends ConsumerState<SecuritySettings> {
       ),
       const Padding(
         padding: EdgeInsets.all(16),
-        child: Text(
-          'Синхронизация, автоматические курсы и экспорт появятся на следующих этапах.',
-        ),
+        child: Text('Синхронизация и экспорт появятся на следующих этапах.'),
       ),
     ],
   );

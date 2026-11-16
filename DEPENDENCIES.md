@@ -1,4 +1,4 @@
-# Зависимости Delta — этап 2
+# Зависимости Delta — этап 3
 
 Состояние: 2026-11-16. Список подготовлен Codex для ревью Claude;
 окончательное принятие — владельцем. Версии взяты из `pubspec.lock`, лицензии —
@@ -29,7 +29,8 @@ material_ui 1.1.0 соответствует шаблону Flutter 3.50.0. Ст
 официальный отдельный пакет Material. Это не сторонняя тема интерфейса.
 
 На этапе 2 добавлены flutter_secure_storage, local_auth, cryptography (PBKDF2),
-path_provider и uuid. fl_chart, Argon2id и HTTP/WebDAV-клиент добавляются
+path_provider и uuid. Этап 3 добавляет xml/petitparser; HTTP — стандартный dart:io.
+fl_chart, Argon2id и WebDAV-клиент добавляются
 на профильных этапах с отдельной проверкой лицензий. Список ниже содержит и служебные зависимости
 тестов/генератора: не все они попадают в APK/EXE.
 
@@ -123,6 +124,7 @@ path_provider и uuid. fl_chart, Argon2id и HTTP/WebDAV-клиент добав
 | path_provider_linux | 2.2.2 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/path_provider_linux/versions/2.2.2/license) | `420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d` |
 | path_provider_platform_interface | 2.1.3 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/path_provider_platform_interface/versions/2.1.3/license) | `420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d` |
 | path_provider_windows | 2.3.0 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/path_provider_windows/versions/2.3.0/license) | `89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9` |
+| petitparser | 7.1.0 | транзитивная | [MIT](https://pub.dev/packages/petitparser/versions/7.1.0/license) | `0be767174b97278f17da4923a74169e8645631f03ea3d8482ec3523c9b1a0dd3` |
 | platform | 3.2.0 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/platform/versions/3.2.0/license) | `143839f62c9b7f88143ea9f688361c27050888acde7696b34e04414bd254fafc` |
 | plugin_platform_interface | 2.1.8 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/plugin_platform_interface/versions/2.1.8/license) | `89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9` |
 | pool | 1.5.3 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/pool/versions/1.5.3/license) | `3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16` |
@@ -157,5 +159,6 @@ path_provider и uuid. fl_chart, Argon2id и HTTP/WebDAV-клиент добав
 | web_socket_channel | 3.0.3 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/web_socket_channel/versions/3.0.3/license) | `a4b5d7d31626e90b77e8696f1c47643aa31f52e17c1907c1ab60b068110e6e10` |
 | win32 | 6.4.0 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/win32/versions/6.4.0/license) | `87ef8bccdd619f2345ba5b9026cf1d6cccb305e36ab83849a8a3af9293abde7e` |
 | xdg_directories | 1.1.0 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/xdg_directories/versions/1.1.0/license) | `89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9` |
+| xml | 7.1.0 | основная | [MIT](https://pub.dev/packages/xml/versions/7.1.0/license) | `0be767174b97278f17da4923a74169e8645631f03ea3d8482ec3523c9b1a0dd3` |
 | yaml | 3.1.4 | транзитивная | [MIT](https://pub.dev/packages/yaml/versions/3.1.4/license) | `d47b93335401b052d79a2f5a3710e4cf7b5aed782faedf84d40fbdd6eb934ec7` |
 | yaml_edit | 2.2.4 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/yaml_edit/versions/2.2.4/license) | `021c41b9b081664f6ee181aaf4e03602c51591204dabe9ac8c8d736f0965b851` |

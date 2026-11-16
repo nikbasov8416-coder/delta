@@ -1,3 +1,5 @@
+import 'package:decimal/decimal.dart';
+import 'package:delta/domain/rates/rates.dart';
 import 'package:delta/ui/app.dart';
 import 'package:delta/ui/providers.dart';
 import 'package:delta/domain/security/pin_service.dart';
@@ -15,6 +17,23 @@ class TestPin extends PinService {
   Future<Duration> delay() async => Duration.zero;
   @override
   Future<bool> verify(String pin) async => pin == '135790';
+}
+
+class WidgetRateGateway implements RateGateway {
+  @override
+  Future<RateBatch> fetch(Set<String> codes, DateTime date) async => RateBatch(
+    quotes: {
+      for (final code in codes)
+        code: RateQuote(
+          code: code,
+          date: dayKey(date),
+          value: Decimal.parse(dayKey(date) == '2026-01-10' ? '2' : '3'),
+          source: 'cbr',
+          effectiveAt: dayKey(date),
+          fetchedAt: DateTime.utc(2026, 1, 12, 10),
+        ),
+    },
+  );
 }
 
 void main() {
@@ -113,5 +132,138 @@ void main() {
       200,
     );
     expect(find.textContaining('личные 1 000,00 ₽'), findsWidgets);
+  });
+  testWidgets('Кнопки подтверждения: без изменений и общий вопрос с отменой', (
+    tester,
+  ) async {
+    final repo = await testRepository();
+    addTearDown(repo.close);
+    final data = await repo.overview();
+    final rub = data.currencies.firstWhere((c) => c.text('code') == 'RUB').id;
+    final usd = data.currencies.firstWhere((c) => c.text('code') == 'USD').id;
+    await repo.saveStorage(
+      name: 'Выдуманное место',
+      type: 'cash',
+      liquidityId: data.liquidity.first.id,
+      organization: '',
+      note: '',
+      archived: false,
+      currencyIds: [rub, usd],
+    );
+    final original = await repo.createSnapshot('2026-01-10', '');
+    for (final row in (await repo.snapshot(original)).lines) {
+      await repo.saveLine(row.id, '5', '1', '');
+    }
+    await repo.saveRate(original, usd, '2');
+    await repo.finalizeSnapshot(original);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          secretStoreProvider.overrideWithValue(MemorySecrets()),
+          pinServiceProvider.overrideWithValue(TestPin()),
+          repositoryProvider.overrideWith((ref) async => repo),
+        ],
+        child: const DeltaApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '135790');
+    await tester.tap(find.text('Войти'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Новый слепок'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Сохранить'));
+    await tester.pumpAndSettle();
+    final id = (await repo.overview()).snapshots.first.id;
+    expect(
+      (await repo.snapshot(id)).lines.every((l) => !l.flag('confirmed')),
+      isTrue,
+    );
+    await tester.ensureVisible(find.text('✓ без изменений').first);
+    await tester.tap(find.text('✓ без изменений').first);
+    await tester.pumpAndSettle();
+    expect(
+      (await repo.snapshot(id)).lines.where((l) => l.flag('confirmed')).length,
+      1,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Подтвердить все непроверенные'),
+      -200,
+    );
+    await tester.tap(find.text('Подтвердить все непроверенные'));
+    await tester.pumpAndSettle();
+    expect(find.text('Точно подтвердить все непроверенные?'), findsOneWidget);
+    await tester.tap(find.text('Отмена'));
+    await tester.pumpAndSettle();
+    expect(
+      (await repo.snapshot(id)).lines.where((l) => l.flag('confirmed')).length,
+      1,
+    );
+    await tester.tap(find.text('Подтвердить все непроверенные'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Да, подтвердить'));
+    await tester.pumpAndSettle();
+    expect(
+      (await repo.snapshot(id)).lines
+          .every((l) => l.flag('confirmed') && l.text('amount') == '5'),
+      isTrue,
+    );
+  });
+  testWidgets('Переключатель итогов меняет оценку, но не курсы слепка', (
+    tester,
+  ) async {
+    final repo = await testRepository(
+      gateway: WidgetRateGateway(),
+      now: () => DateTime.utc(2026, 1, 12, 10),
+    );
+    addTearDown(repo.close);
+    final data = await repo.overview();
+    await repo.saveStorage(
+      name: 'Выдуманное место',
+      type: 'cash',
+      liquidityId: data.liquidity.first.id,
+      organization: '',
+      note: '',
+      archived: false,
+      currencyIds: data.currencies
+          .where((c) => ['RUB', 'USD'].contains(c.text('code')))
+          .map((c) => c.id)
+          .toList(),
+    );
+    final id = await repo.createSnapshot('2026-01-10', '');
+    for (final row in (await repo.snapshot(id)).lines) {
+      await repo.saveLine(row.id, '10', '2', '');
+    }
+    await repo.finalizeSnapshot(id);
+    final before = (await repo.snapshot(id)).rates
+        .map((r) => r.values)
+        .toList();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          secretStoreProvider.overrideWithValue(MemorySecrets()),
+          pinServiceProvider.overrideWithValue(TestPin()),
+          repositoryProvider.overrideWith((ref) async => repo),
+        ],
+        child: const DeltaApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '135790');
+    await tester.tap(find.text('Войти'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('По сегодняшнему'), 200);
+    await tester.tap(find.text('По сегодняшнему'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Всего: 40,00 ₽'), findsOneWidget);
+    expect(
+      (await repo.snapshot(id)).rates.map((r) => r.values).toList(),
+      before,
+    );
+    expect((await repo.snapshot(id)).audit, isEmpty);
+    await tester.ensureVisible(find.text('По курсу слепка'));
+    await tester.tap(find.text('По курсу слепка'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Всего: 30,00 ₽'), findsOneWidget);
   });
 }

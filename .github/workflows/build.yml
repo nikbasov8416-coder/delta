@@ -55,6 +55,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle*
+            android/**/gradle-wrapper.properties
+            pubspec.lock
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -76,7 +81,19 @@ jobs:
           DELTA_ANDROID_KEY_ALIAS: ${{ secrets.DELTA_ANDROID_KEY_ALIAS }}
           DELTA_ANDROID_KEY_PASSWORD: ${{ secrets.DELTA_ANDROID_KEY_PASSWORD }}
           DELTA_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/delta-signing.jks
-        run: flutter build apk --release --no-pub --build-number=${{ github.run_number }}
+        shell: bash
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3; do
+            if flutter build apk --release --no-pub --build-number=${{ github.run_number }} 2>&1 | tee "$RUNNER_TEMP/delta-build.log"; then
+              exit 0
+            fi
+            if ! grep -Eiq 'Too Many Requests|status code 429|status code 503|Connection timed out|Read timed out' "$RUNNER_TEMP/delta-build.log"; then
+              exit 1
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$((attempt * 15))"; fi
+          done
+          exit 1
       - name: Удалить временный keystore
         if: always()
         run: rm -f -- "$RUNNER_TEMP/delta-signing.jks"

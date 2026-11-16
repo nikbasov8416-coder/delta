@@ -1,5 +1,6 @@
 import 'records.dart';
 import '../snapshots/snapshot_totals.dart';
+import '../rates/rates.dart';
 
 abstract interface class FinanceRepository {
   Future<void> initialize();
@@ -31,6 +32,14 @@ abstract interface class FinanceRepository {
   Future<String> createSnapshot(String date, String note);
   Future<SnapshotDetail> snapshot(String id);
   Future<void> saveLine(String id, String amount, String family, String note);
+  Future<void> confirmLine(String id);
+  Future<int> confirmUnreviewed(String snapshotId);
+  Future<RateBatch> refreshSnapshotRates(String id, {bool force = true});
+  Future<SnapshotValuation> valuation(
+    String id, {
+    bool today = false,
+    bool force = false,
+  });
   Future<void> addSnapshotCurrency(
     String snapshotId,
     String storageId,

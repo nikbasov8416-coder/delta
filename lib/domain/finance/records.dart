@@ -1,5 +1,8 @@
 import 'package:decimal/decimal.dart';
 
+import '../rates/rates.dart';
+import '../snapshots/snapshot_totals.dart';
+
 /// Неизменяемая проекция сущности для экранов. Суммы остаются строками Decimal.
 class FinanceRecord {
   FinanceRecord(Map<String, Object?> values)
@@ -28,9 +31,22 @@ class FinanceOverview {
 }
 
 class SnapshotDetail {
-  const SnapshotDetail(this.header, this.lines, this.rates, this.audit);
+  const SnapshotDetail(
+    this.header,
+    this.lines,
+    this.rates,
+    this.audit, {
+    this.rateErrors = const {},
+  });
   final FinanceRecord header;
   final List<FinanceRecord> lines;
   final List<FinanceRecord> rates;
   final List<FinanceRecord> audit;
+  final Map<String, String> rateErrors;
+}
+
+class SnapshotValuation {
+  const SnapshotValuation(this.totals, this.rates);
+  final SnapshotTotals totals;
+  final List<RateQuote> rates;
 }

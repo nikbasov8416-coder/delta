@@ -3460,6 +3460,30 @@ class SnapshotRate extends Table
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL',
   );
+  static const VerificationMeta _rateDateMeta = const VerificationMeta(
+    'rateDate',
+  );
+  late final GeneratedColumn<String> rateDate = GeneratedColumn<String>(
+    'rate_date',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT \'\'',
+    defaultValue: const CustomExpression('\'\''),
+  );
+  static const VerificationMeta _effectiveAtMeta = const VerificationMeta(
+    'effectiveAt',
+  );
+  late final GeneratedColumn<String> effectiveAt = GeneratedColumn<String>(
+    'effective_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT \'\'',
+    defaultValue: const CustomExpression('\'\''),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -3471,6 +3495,8 @@ class SnapshotRate extends Table
     rate,
     source,
     fetchedAt,
+    rateDate,
+    effectiveAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3551,6 +3577,21 @@ class SnapshotRate extends Table
     } else if (isInserting) {
       context.missing(_fetchedAtMeta);
     }
+    if (data.containsKey('rate_date')) {
+      context.handle(
+        _rateDateMeta,
+        rateDate.isAcceptableOrUnknown(data['rate_date']!, _rateDateMeta),
+      );
+    }
+    if (data.containsKey('effective_at')) {
+      context.handle(
+        _effectiveAtMeta,
+        effectiveAt.isAcceptableOrUnknown(
+          data['effective_at']!,
+          _effectiveAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -3600,6 +3641,14 @@ class SnapshotRate extends Table
         DriftSqlType.string,
         data['${effectivePrefix}fetched_at'],
       )!,
+      rateDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}rate_date'],
+      )!,
+      effectiveAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}effective_at'],
+      )!,
     );
   }
 
@@ -3627,6 +3676,8 @@ class SnapshotRateData extends DataClass
   final String rate;
   final String source;
   final String fetchedAt;
+  final String rateDate;
+  final String effectiveAt;
   const SnapshotRateData({
     required this.id,
     required this.updatedAt,
@@ -3637,6 +3688,8 @@ class SnapshotRateData extends DataClass
     required this.rate,
     required this.source,
     required this.fetchedAt,
+    required this.rateDate,
+    required this.effectiveAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3650,6 +3703,8 @@ class SnapshotRateData extends DataClass
     map['rate'] = Variable<String>(rate);
     map['source'] = Variable<String>(source);
     map['fetched_at'] = Variable<String>(fetchedAt);
+    map['rate_date'] = Variable<String>(rateDate);
+    map['effective_at'] = Variable<String>(effectiveAt);
     return map;
   }
 
@@ -3664,6 +3719,8 @@ class SnapshotRateData extends DataClass
       rate: Value(rate),
       source: Value(source),
       fetchedAt: Value(fetchedAt),
+      rateDate: Value(rateDate),
+      effectiveAt: Value(effectiveAt),
     );
   }
 
@@ -3682,6 +3739,8 @@ class SnapshotRateData extends DataClass
       rate: serializer.fromJson<String>(json['rate']),
       source: serializer.fromJson<String>(json['source']),
       fetchedAt: serializer.fromJson<String>(json['fetched_at']),
+      rateDate: serializer.fromJson<String>(json['rate_date']),
+      effectiveAt: serializer.fromJson<String>(json['effective_at']),
     );
   }
   @override
@@ -3697,6 +3756,8 @@ class SnapshotRateData extends DataClass
       'rate': serializer.toJson<String>(rate),
       'source': serializer.toJson<String>(source),
       'fetched_at': serializer.toJson<String>(fetchedAt),
+      'rate_date': serializer.toJson<String>(rateDate),
+      'effective_at': serializer.toJson<String>(effectiveAt),
     };
   }
 
@@ -3710,6 +3771,8 @@ class SnapshotRateData extends DataClass
     String? rate,
     String? source,
     String? fetchedAt,
+    String? rateDate,
+    String? effectiveAt,
   }) => SnapshotRateData(
     id: id ?? this.id,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -3720,6 +3783,8 @@ class SnapshotRateData extends DataClass
     rate: rate ?? this.rate,
     source: source ?? this.source,
     fetchedAt: fetchedAt ?? this.fetchedAt,
+    rateDate: rateDate ?? this.rateDate,
+    effectiveAt: effectiveAt ?? this.effectiveAt,
   );
   SnapshotRateData copyWithCompanion(SnapshotRateCompanion data) {
     return SnapshotRateData(
@@ -3736,6 +3801,10 @@ class SnapshotRateData extends DataClass
       rate: data.rate.present ? data.rate.value : this.rate,
       source: data.source.present ? data.source.value : this.source,
       fetchedAt: data.fetchedAt.present ? data.fetchedAt.value : this.fetchedAt,
+      rateDate: data.rateDate.present ? data.rateDate.value : this.rateDate,
+      effectiveAt: data.effectiveAt.present
+          ? data.effectiveAt.value
+          : this.effectiveAt,
     );
   }
 
@@ -3750,7 +3819,9 @@ class SnapshotRateData extends DataClass
           ..write('currencyId: $currencyId, ')
           ..write('rate: $rate, ')
           ..write('source: $source, ')
-          ..write('fetchedAt: $fetchedAt')
+          ..write('fetchedAt: $fetchedAt, ')
+          ..write('rateDate: $rateDate, ')
+          ..write('effectiveAt: $effectiveAt')
           ..write(')'))
         .toString();
   }
@@ -3766,6 +3837,8 @@ class SnapshotRateData extends DataClass
     rate,
     source,
     fetchedAt,
+    rateDate,
+    effectiveAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -3779,7 +3852,9 @@ class SnapshotRateData extends DataClass
           other.currencyId == this.currencyId &&
           other.rate == this.rate &&
           other.source == this.source &&
-          other.fetchedAt == this.fetchedAt);
+          other.fetchedAt == this.fetchedAt &&
+          other.rateDate == this.rateDate &&
+          other.effectiveAt == this.effectiveAt);
 }
 
 class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
@@ -3792,6 +3867,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
   final Value<String> rate;
   final Value<String> source;
   final Value<String> fetchedAt;
+  final Value<String> rateDate;
+  final Value<String> effectiveAt;
   final Value<int> rowid;
   const SnapshotRateCompanion({
     this.id = const Value.absent(),
@@ -3803,6 +3880,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
     this.rate = const Value.absent(),
     this.source = const Value.absent(),
     this.fetchedAt = const Value.absent(),
+    this.rateDate = const Value.absent(),
+    this.effectiveAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   SnapshotRateCompanion.insert({
@@ -3815,6 +3894,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
     required String rate,
     required String source,
     required String fetchedAt,
+    this.rateDate = const Value.absent(),
+    this.effectiveAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        updatedAt = Value(updatedAt),
@@ -3834,6 +3915,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
     Expression<String>? rate,
     Expression<String>? source,
     Expression<String>? fetchedAt,
+    Expression<String>? rateDate,
+    Expression<String>? effectiveAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3846,6 +3929,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
       if (rate != null) 'rate': rate,
       if (source != null) 'source': source,
       if (fetchedAt != null) 'fetched_at': fetchedAt,
+      if (rateDate != null) 'rate_date': rateDate,
+      if (effectiveAt != null) 'effective_at': effectiveAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3860,6 +3945,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
     Value<String>? rate,
     Value<String>? source,
     Value<String>? fetchedAt,
+    Value<String>? rateDate,
+    Value<String>? effectiveAt,
     Value<int>? rowid,
   }) {
     return SnapshotRateCompanion(
@@ -3872,6 +3959,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
       rate: rate ?? this.rate,
       source: source ?? this.source,
       fetchedAt: fetchedAt ?? this.fetchedAt,
+      rateDate: rateDate ?? this.rateDate,
+      effectiveAt: effectiveAt ?? this.effectiveAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3906,6 +3995,12 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
     if (fetchedAt.present) {
       map['fetched_at'] = Variable<String>(fetchedAt.value);
     }
+    if (rateDate.present) {
+      map['rate_date'] = Variable<String>(rateDate.value);
+    }
+    if (effectiveAt.present) {
+      map['effective_at'] = Variable<String>(effectiveAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3924,6 +4019,8 @@ class SnapshotRateCompanion extends UpdateCompanion<SnapshotRateData> {
           ..write('rate: $rate, ')
           ..write('source: $source, ')
           ..write('fetchedAt: $fetchedAt, ')
+          ..write('rateDate: $rateDate, ')
+          ..write('effectiveAt: $effectiveAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5082,6 +5179,30 @@ class RateCache extends Table with TableInfo<RateCache, RateCacheData> {
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL',
   );
+  static const VerificationMeta _fetchedAtMeta = const VerificationMeta(
+    'fetchedAt',
+  );
+  late final GeneratedColumn<String> fetchedAt = GeneratedColumn<String>(
+    'fetched_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT \'\'',
+    defaultValue: const CustomExpression('\'\''),
+  );
+  static const VerificationMeta _effectiveAtMeta = const VerificationMeta(
+    'effectiveAt',
+  );
+  late final GeneratedColumn<String> effectiveAt = GeneratedColumn<String>(
+    'effective_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT \'\'',
+    defaultValue: const CustomExpression('\'\''),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -5092,6 +5213,8 @@ class RateCache extends Table with TableInfo<RateCache, RateCacheData> {
     date,
     rate,
     source,
+    fetchedAt,
+    effectiveAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -5164,6 +5287,21 @@ class RateCache extends Table with TableInfo<RateCache, RateCacheData> {
     } else if (isInserting) {
       context.missing(_sourceMeta);
     }
+    if (data.containsKey('fetched_at')) {
+      context.handle(
+        _fetchedAtMeta,
+        fetchedAt.isAcceptableOrUnknown(data['fetched_at']!, _fetchedAtMeta),
+      );
+    }
+    if (data.containsKey('effective_at')) {
+      context.handle(
+        _effectiveAtMeta,
+        effectiveAt.isAcceptableOrUnknown(
+          data['effective_at']!,
+          _effectiveAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -5209,6 +5347,14 @@ class RateCache extends Table with TableInfo<RateCache, RateCacheData> {
         DriftSqlType.string,
         data['${effectivePrefix}source'],
       )!,
+      fetchedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}fetched_at'],
+      )!,
+      effectiveAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}effective_at'],
+      )!,
     );
   }
 
@@ -5234,6 +5380,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
   final String date;
   final String rate;
   final String source;
+  final String fetchedAt;
+  final String effectiveAt;
   const RateCacheData({
     required this.id,
     required this.updatedAt,
@@ -5243,6 +5391,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
     required this.date,
     required this.rate,
     required this.source,
+    required this.fetchedAt,
+    required this.effectiveAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -5255,6 +5405,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
     map['date'] = Variable<String>(date);
     map['rate'] = Variable<String>(rate);
     map['source'] = Variable<String>(source);
+    map['fetched_at'] = Variable<String>(fetchedAt);
+    map['effective_at'] = Variable<String>(effectiveAt);
     return map;
   }
 
@@ -5268,6 +5420,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
       date: Value(date),
       rate: Value(rate),
       source: Value(source),
+      fetchedAt: Value(fetchedAt),
+      effectiveAt: Value(effectiveAt),
     );
   }
 
@@ -5285,6 +5439,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
       date: serializer.fromJson<String>(json['date']),
       rate: serializer.fromJson<String>(json['rate']),
       source: serializer.fromJson<String>(json['source']),
+      fetchedAt: serializer.fromJson<String>(json['fetched_at']),
+      effectiveAt: serializer.fromJson<String>(json['effective_at']),
     );
   }
   @override
@@ -5299,6 +5455,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
       'date': serializer.toJson<String>(date),
       'rate': serializer.toJson<String>(rate),
       'source': serializer.toJson<String>(source),
+      'fetched_at': serializer.toJson<String>(fetchedAt),
+      'effective_at': serializer.toJson<String>(effectiveAt),
     };
   }
 
@@ -5311,6 +5469,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
     String? date,
     String? rate,
     String? source,
+    String? fetchedAt,
+    String? effectiveAt,
   }) => RateCacheData(
     id: id ?? this.id,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -5320,6 +5480,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
     date: date ?? this.date,
     rate: rate ?? this.rate,
     source: source ?? this.source,
+    fetchedAt: fetchedAt ?? this.fetchedAt,
+    effectiveAt: effectiveAt ?? this.effectiveAt,
   );
   RateCacheData copyWithCompanion(RateCacheCompanion data) {
     return RateCacheData(
@@ -5333,6 +5495,10 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
       date: data.date.present ? data.date.value : this.date,
       rate: data.rate.present ? data.rate.value : this.rate,
       source: data.source.present ? data.source.value : this.source,
+      fetchedAt: data.fetchedAt.present ? data.fetchedAt.value : this.fetchedAt,
+      effectiveAt: data.effectiveAt.present
+          ? data.effectiveAt.value
+          : this.effectiveAt,
     );
   }
 
@@ -5346,7 +5512,9 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
           ..write('currencyId: $currencyId, ')
           ..write('date: $date, ')
           ..write('rate: $rate, ')
-          ..write('source: $source')
+          ..write('source: $source, ')
+          ..write('fetchedAt: $fetchedAt, ')
+          ..write('effectiveAt: $effectiveAt')
           ..write(')'))
         .toString();
   }
@@ -5361,6 +5529,8 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
     date,
     rate,
     source,
+    fetchedAt,
+    effectiveAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -5373,7 +5543,9 @@ class RateCacheData extends DataClass implements Insertable<RateCacheData> {
           other.currencyId == this.currencyId &&
           other.date == this.date &&
           other.rate == this.rate &&
-          other.source == this.source);
+          other.source == this.source &&
+          other.fetchedAt == this.fetchedAt &&
+          other.effectiveAt == this.effectiveAt);
 }
 
 class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
@@ -5385,6 +5557,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
   final Value<String> date;
   final Value<String> rate;
   final Value<String> source;
+  final Value<String> fetchedAt;
+  final Value<String> effectiveAt;
   final Value<int> rowid;
   const RateCacheCompanion({
     this.id = const Value.absent(),
@@ -5395,6 +5569,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
     this.date = const Value.absent(),
     this.rate = const Value.absent(),
     this.source = const Value.absent(),
+    this.fetchedAt = const Value.absent(),
+    this.effectiveAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   RateCacheCompanion.insert({
@@ -5406,6 +5582,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
     required String date,
     required String rate,
     required String source,
+    this.fetchedAt = const Value.absent(),
+    this.effectiveAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        updatedAt = Value(updatedAt),
@@ -5423,6 +5601,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
     Expression<String>? date,
     Expression<String>? rate,
     Expression<String>? source,
+    Expression<String>? fetchedAt,
+    Expression<String>? effectiveAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -5434,6 +5614,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
       if (date != null) 'date': date,
       if (rate != null) 'rate': rate,
       if (source != null) 'source': source,
+      if (fetchedAt != null) 'fetched_at': fetchedAt,
+      if (effectiveAt != null) 'effective_at': effectiveAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -5447,6 +5629,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
     Value<String>? date,
     Value<String>? rate,
     Value<String>? source,
+    Value<String>? fetchedAt,
+    Value<String>? effectiveAt,
     Value<int>? rowid,
   }) {
     return RateCacheCompanion(
@@ -5458,6 +5642,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
       date: date ?? this.date,
       rate: rate ?? this.rate,
       source: source ?? this.source,
+      fetchedAt: fetchedAt ?? this.fetchedAt,
+      effectiveAt: effectiveAt ?? this.effectiveAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -5489,6 +5675,12 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
     if (source.present) {
       map['source'] = Variable<String>(source.value);
     }
+    if (fetchedAt.present) {
+      map['fetched_at'] = Variable<String>(fetchedAt.value);
+    }
+    if (effectiveAt.present) {
+      map['effective_at'] = Variable<String>(effectiveAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -5506,6 +5698,8 @@ class RateCacheCompanion extends UpdateCompanion<RateCacheData> {
           ..write('date: $date, ')
           ..write('rate: $rate, ')
           ..write('source: $source, ')
+          ..write('fetchedAt: $fetchedAt, ')
+          ..write('effectiveAt: $effectiveAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();

@@ -10,14 +10,24 @@ import '../domain/money/amount.dart';
 import '../domain/money/currency.dart' as money;
 import '../domain/snapshots/snapshot_totals.dart';
 import '../domain/sync/hlc.dart';
+import '../domain/rates/rates.dart';
 import 'database/app_database.dart';
 
 class DriftFinanceRepository implements FinanceRepository {
-  DriftFinanceRepository(this.db, this.deviceId, {HybridClock? clock})
-    : clock = clock ?? HybridClock(deviceId);
+  DriftFinanceRepository(
+    this.db,
+    this.deviceId, {
+    HybridClock? clock,
+    this.gateway,
+    DateTime Function()? now,
+  }) : clock = clock ?? HybridClock(deviceId),
+       now = now ?? DateTime.now;
   final AppDatabase db;
   final String deviceId;
   final HybridClock clock;
+  final RateGateway? gateway;
+  final DateTime Function() now;
+  final _rateIssues = <String, Map<String, String>>{};
   static const _uuid = Uuid();
   static const tables = [
     'currency',
@@ -334,13 +344,19 @@ class DriftFinanceRepository implements FinanceRepository {
   });
 
   @override
-  Future<String> createSnapshot(String date, String note) => db.transaction(
+  Future<String> createSnapshot(String date, String note) async {
+    final id = await _createSnapshot(date, note);
+    if (gateway != null) await refreshSnapshotRates(id, force: false);
+    return id;
+  }
+
+  Future<String> _createSnapshot(String date, String note) => db.transaction(
     () async {
       _date(date);
       final id = _uuid.v4();
       // Последний слепок на выбранную дату: будущие значения не копируем назад.
       final previous = await query(
-        'SELECT id FROM snapshot WHERE deleted=0 AND date<=? ORDER BY date DESC,created_at DESC LIMIT 1',
+        "SELECT id FROM snapshot WHERE deleted=0 AND status='fixed' AND date<=? ORDER BY date DESC,created_at DESC LIMIT 1",
         [date],
       );
       await _insert('snapshot', {
@@ -398,6 +414,7 @@ class DriftFinanceRepository implements FinanceRepository {
       'SELECT * FROM audit_log WHERE snapshot_id=? AND deleted=0 ORDER BY updated_at DESC',
       [id],
     ),
+    rateErrors: Map.unmodifiable(_rateIssues[id] ?? {}),
   );
 
   Future<void> _audit(
@@ -458,6 +475,15 @@ class DriftFinanceRepository implements FinanceRepository {
     String snapshotId,
     String storageId,
     String currencyId,
+  ) async {
+    await _addSnapshotCurrency(snapshotId, storageId, currencyId);
+    if (gateway != null) await refreshSnapshotRates(snapshotId, force: false);
+  }
+
+  Future<void> _addSnapshotCurrency(
+    String snapshotId,
+    String storageId,
+    String currencyId,
   ) => db.transaction(() async {
     final header = await _one('snapshot', snapshotId);
     if (header.text('status') != 'draft') {
@@ -506,56 +532,93 @@ class DriftFinanceRepository implements FinanceRepository {
   });
 
   @override
-  Future<void> saveRate(String snapshotId, String currencyId, String value) =>
-      db.transaction(() async {
-        final header = await _one('snapshot', snapshotId);
-        final currency = await _one('currency', currencyId);
-        final rate = Decimal.parse(normalizeNumberInput(value));
-        if (rate <= Decimal.zero ||
-            (currency.text('code') == 'RUB' && rate != Decimal.one)) {
-          throw const FormatException(
-            'Курс должен быть положительным; для RUB равен 1',
-          );
-        }
-        final used = await query(
-          'SELECT id FROM snapshot_line WHERE snapshot_id=? AND currency_id=? AND deleted=0 LIMIT 1',
-          [snapshotId, currencyId],
-        );
-        if (used.isEmpty) throw StateError('Валюты нет в слепке');
-        final old = await query(
-          'SELECT * FROM snapshot_rate WHERE snapshot_id=? AND currency_id=?',
-          [snapshotId, currencyId],
-        );
-        final target = old.isEmpty ? _uuid.v4() : old.single.id;
-        final fields = {
-          'rate': rate.toString(),
-          'source': currency.text('code') == 'RUB' ? 'identity' : 'manual',
-          'fetched_at': DateTime.now().toUtc().toIso8601String(),
-        };
-        await _audit(
-          header,
-          'snapshot_rate',
-          target,
-          old.isEmpty
-              ? {}
-              : {for (final key in fields.keys) key: old.single.values[key]},
-          fields,
-        );
-        if (old.isEmpty) {
-          await _insert('snapshot_rate', {
-            ..._new(target),
-            'snapshot_id': snapshotId,
-            'currency_id': currencyId,
-            ...fields,
-          });
-        } else {
-          await _update('snapshot_rate', target, fields);
-        }
-        await _update('snapshot', snapshotId, {});
+  Future<void> saveRate(
+    String snapshotId,
+    String currencyId,
+    String value,
+  ) async {
+    final header = await _one('snapshot', snapshotId);
+    final currency = await _one('currency', currencyId);
+    await _writeRate(
+      snapshotId,
+      currencyId,
+      RateQuote(
+        code: currency.text('code'),
+        date: header.text('date'),
+        value: Decimal.parse(normalizeNumberInput(value)),
+        source: currency.text('code') == 'RUB' ? 'identity' : 'manual',
+        effectiveAt: header.text('date'),
+        fetchedAt: now().toUtc(),
+      ),
+    );
+    _rateIssues[snapshotId]?.remove(currency.text('code'));
+  }
+
+  Future<void> _writeRate(
+    String snapshotId,
+    String currencyId,
+    RateQuote quote,
+  ) => db.transaction(() async {
+    final header = await _one('snapshot', snapshotId);
+    final currency = await _one('currency', currencyId);
+    final rate = quote.value;
+    if (rate <= Decimal.zero ||
+        (currency.text('code') == 'RUB' && rate != Decimal.one)) {
+      throw const FormatException(
+        'Курс должен быть положительным; для RUB равен 1',
+      );
+    }
+    final used = await query(
+      'SELECT id FROM snapshot_line WHERE snapshot_id=? AND currency_id=? AND deleted=0 LIMIT 1',
+      [snapshotId, currencyId],
+    );
+    if (used.isEmpty) throw StateError('Валюты нет в слепке');
+    final old = await query(
+      'SELECT * FROM snapshot_rate WHERE snapshot_id=? AND currency_id=?',
+      [snapshotId, currencyId],
+    );
+    final target = old.isEmpty ? _uuid.v4() : old.single.id;
+    final fields = {
+      'rate': rate.toString(),
+      'source': quote.source,
+      'fetched_at': quote.fetchedAt.toUtc().toIso8601String(),
+      'rate_date': quote.date,
+      'effective_at': quote.effectiveAt,
+    };
+    await _audit(
+      header,
+      'snapshot_rate',
+      target,
+      old.isEmpty
+          ? {}
+          : {for (final key in fields.keys) key: old.single.values[key]},
+      fields,
+    );
+    if (old.isEmpty) {
+      await _insert('snapshot_rate', {
+        ..._new(target),
+        'snapshot_id': snapshotId,
+        'currency_id': currencyId,
+        ...fields,
       });
+    } else {
+      await _update('snapshot_rate', target, fields);
+    }
+    await _update('snapshot', snapshotId, {});
+  });
 
   @override
-  Future<void> saveSnapshotHeader(String id, String date, String note) =>
+  Future<void> saveSnapshotHeader(String id, String date, String note) async {
+    final old = await _one('snapshot', id);
+    await _saveSnapshotHeader(id, date, note);
+    if (old.text('date') != date &&
+        old.text('status') == 'draft' &&
+        gateway != null) {
+      await refreshSnapshotRates(id, force: false);
+    }
+  }
+
+  Future<void> _saveSnapshotHeader(String id, String date, String note) =>
       db.transaction(() async {
         _date(date);
         final old = await _one('snapshot', id);
@@ -594,16 +657,270 @@ class DriftFinanceRepository implements FinanceRepository {
   });
 
   @override
-  Future<SnapshotTotals> totals(String id) async {
+  Future<SnapshotTotals> totals(String id) async =>
+      (await valuation(id)).totals;
+
+  @override
+  Future<void> confirmLine(String id) => db.transaction(() async {
+    final line = await _one('snapshot_line', id);
+    final header = await _one('snapshot', line.text('snapshot_id'));
+    if (header.text('status') != 'draft') {
+      throw StateError('Слепок уже зафиксирован');
+    }
+    if (line.values['amount'] == null) {
+      throw StateError('Сначала заполните сумму');
+    }
+    if (!line.flag('confirmed')) {
+      await _update('snapshot_line', id, {'confirmed': 1});
+      await _update('snapshot', header.id, {});
+    }
+  });
+
+  @override
+  Future<int> confirmUnreviewed(String snapshotId) => db.transaction(() async {
+    final header = await _one('snapshot', snapshotId);
+    if (header.text('status') != 'draft') {
+      throw StateError('Слепок уже зафиксирован');
+    }
+    final lines = await query(
+      'SELECT id FROM snapshot_line WHERE snapshot_id=? AND deleted=0 AND confirmed=0 AND amount IS NOT NULL',
+      [snapshotId],
+    );
+    for (final line in lines) {
+      await _update('snapshot_line', line.id, {'confirmed': 1});
+    }
+    if (lines.isNotEmpty) await _update('snapshot', snapshotId, {});
+    return lines.length;
+  });
+
+  RateQuote _storedQuote(
+    FinanceRecord row,
+    String date, {
+    bool cached = false,
+  }) => RateQuote(
+    code: row.text('code'),
+    date: date,
+    value: row.decimal('rate'),
+    source: row.text('source'),
+    effectiveAt: row.text('effective_at'),
+    fetchedAt: DateTime.parse(row.text('fetched_at')),
+    cached: cached,
+  );
+
+  Future<RateBatch> _obtainRates(
+    Set<String> codes,
+    DateTime date, {
+    required bool force,
+  }) async {
+    final result = <String, RateQuote>{}, errors = <String, String>{};
+    final dateString = dayKey(date), today = dayKey(now());
+    if (codes.contains('RUB')) {
+      result['RUB'] = RateQuote(
+        code: 'RUB',
+        date: dateString,
+        value: Decimal.one,
+        source: 'identity',
+        effectiveAt: dateString,
+        fetchedAt: now().toUtc(),
+      );
+    }
+    if (!force) {
+      for (final code in codes.difference({'RUB'})) {
+        final cached = await query(
+          'SELECT rc.*,c.code FROM rate_cache rc JOIN currency c ON c.id=rc.currency_id WHERE c.code=? AND rc.date=? AND rc.deleted=0 ORDER BY CASE rc.source WHEN \'coingecko\' THEN 0 WHEN \'cbr\' THEN 0 ELSE 1 END,rc.fetched_at DESC',
+          [code, dateString],
+        );
+        for (final row in cached) {
+          if (row.text('fetched_at').isEmpty ||
+              row.text('effective_at').isEmpty) {
+            continue;
+          }
+          final source = row.text('source');
+          if (!(['BTC', 'USDT'].contains(code)
+                  ? ['coingecko', 'kraken+cbr']
+                  : ['cbr'])
+              .contains(source)) {
+            continue;
+          }
+          try {
+            final quote = _storedQuote(row, dateString, cached: true);
+            final age = now().toUtc().difference(quote.fetchedAt.toUtc());
+            if (dateString == today &&
+                (age > const Duration(minutes: 15) ||
+                    age < const Duration(minutes: -5))) {
+              continue;
+            }
+            result[code] = quote;
+            break;
+          } catch (_) {
+            continue;
+          }
+        }
+      }
+    }
+    final missing = codes.difference(result.keys.toSet());
+    if (missing.isNotEmpty) {
+      if (gateway == null) {
+        for (final code in missing) {
+          errors[code] =
+              'Автоматический источник не подключён. Введите курс вручную.';
+        }
+      } else {
+        RateBatch fetched;
+        try {
+          fetched = await gateway!.fetch(missing, date);
+        } catch (_) {
+          fetched = RateBatch(
+            errors: {
+              for (final code in missing)
+                code: 'Не удалось получить курс. Введите вручную.',
+            },
+          );
+        }
+        errors.addAll(fetched.errors);
+        for (final code in missing) {
+          final quote = fetched.quotes[code];
+          final validSource = ['BTC', 'USDT'].contains(code)
+              ? ['coingecko', 'kraken+cbr']
+              : ['cbr'];
+          if (quote == null) {
+            errors.putIfAbsent(
+              code,
+              () => 'Источник не вернул курс. Введите вручную.',
+            );
+            continue;
+          }
+          if (quote.code != code ||
+              quote.date != dateString ||
+              quote.value <= Decimal.zero ||
+              !validSource.contains(quote.source) ||
+              quote.effectiveAt.isEmpty) {
+            errors[code] =
+                'Источник вернул курс другой даты или неверное значение';
+            continue;
+          }
+          result[code] = quote;
+          errors.remove(code);
+        }
+        // Сохраняем только проверенные ответы, а не ручные курсы и не ошибки.
+        await db.transaction(() async {
+          for (final code in missing.where(result.containsKey)) {
+            final quote = result[code]!;
+            final currency = (await query(
+              'SELECT id FROM currency WHERE code=? AND deleted=0',
+              [code],
+            )).single;
+            final old = await query(
+              'SELECT id FROM rate_cache WHERE currency_id=? AND date=? AND source=?',
+              [currency.id, dateString, quote.source],
+            );
+            final fields = {
+              'rate': quote.value.toString(),
+              'fetched_at': quote.fetchedAt.toUtc().toIso8601String(),
+              'effective_at': quote.effectiveAt,
+            };
+            if (old.isEmpty) {
+              await _insert('rate_cache', {
+                ..._new(),
+                'currency_id': currency.id,
+                'date': dateString,
+                'source': quote.source,
+                ...fields,
+              });
+            } else {
+              await _update('rate_cache', old.single.id, {
+                ...fields,
+                'deleted': 0,
+              });
+            }
+          }
+        });
+      }
+    }
+    return RateBatch(quotes: result, errors: errors);
+  }
+
+  @override
+  Future<RateBatch> refreshSnapshotRates(String id, {bool force = true}) async {
+    final before = await snapshot(id), date = before.header.text('date');
+    final codes = before.lines.map((l) => l.text('code')).toSet();
+    final preserved = <String, RateQuote>{};
+    if (!force) {
+      for (final row in before.rates) {
+        if (row.text('source') == 'manual' && row.text('rate_date') == date) {
+          preserved[row.text('code')] = _storedQuote(row, date);
+        }
+      }
+    }
+    final fetched = await _obtainRates(
+      codes.difference(preserved.keys.toSet()),
+      DateTime.parse(date),
+      force: force,
+    );
+    final batch = RateBatch(
+      quotes: {...fetched.quotes, ...preserved},
+      errors: fetched.errors,
+    );
+    await db.transaction(() async {
+      final header = await _one('snapshot', id);
+      if (header.text('date') != date ||
+          header.text('updated_at') != before.header.text('updated_at')) {
+        throw StateError(
+          'Слепок изменился во время загрузки. Повторите обновление курсов.',
+        );
+      }
+      for (final quote in batch.quotes.values) {
+        final line = before.lines.firstWhere(
+          (l) => l.text('code') == quote.code,
+        );
+        await _writeRate(id, line.text('currency_id'), quote);
+      }
+    });
+    _rateIssues[id] = Map.of(batch.errors);
+    return batch;
+  }
+
+  @override
+  Future<SnapshotValuation> valuation(
+    String id, {
+    bool today = false,
+    bool force = false,
+  }) async {
     final detail = await snapshot(id);
-    final rates = {
-      for (final rate in detail.rates) rate.text('code'): rate.decimal('rate'),
-      'RUB': Decimal.one,
-    };
     if (detail.lines.any((l) => l.values['amount'] == null)) {
       throw StateError('Не все суммы заполнены');
     }
-    return calculateTotals(
+    final codes = detail.lines.map((l) => l.text('code')).toSet();
+    final quotes = <String, RateQuote>{};
+    if (today) {
+      final batch = await _obtainRates(codes, calendarDay(now()), force: force);
+      if (batch.errors.isNotEmpty) {
+        throw StateError(
+          'Сегодняшняя оценка недоступна: ${batch.errors.entries.map((e) => '${e.key}: ${e.value}').join('; ')} Переключитесь на курс слепка.',
+        );
+      }
+      quotes.addAll(batch.quotes);
+    } else {
+      final date = detail.header.text('date');
+      for (final row in detail.rates) {
+        if (row.text('code') == 'RUB') continue;
+        if (row.text('rate_date') != date) {
+          throw StateError(
+            'Дата слепка изменилась. Обновите курсы или введите их вручную.',
+          );
+        }
+        quotes[row.text('code')] = _storedQuote(row, date);
+      }
+      quotes['RUB'] = RateQuote(
+        code: 'RUB',
+        date: date,
+        value: Decimal.one,
+        source: 'identity',
+        effectiveAt: date,
+        fetchedAt: now().toUtc(),
+      );
+    }
+    final totals = calculateTotals(
       detail.lines.map(
         (line) => SnapshotPosition(
           storageId: line.text('storage_id'),
@@ -613,8 +930,12 @@ class DriftFinanceRepository implements FinanceRepository {
           familyAmount: line.decimal('family_amount'),
         ),
       ),
-      rates,
+      {for (final quote in quotes.values) quote.code: quote.value},
     );
+    return SnapshotValuation(totals, [
+      for (final code in codes)
+        if (quotes.containsKey(code)) quotes[code]!,
+    ]);
   }
 
   @override

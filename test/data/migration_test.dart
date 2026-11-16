@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
-  test('Миграция пустого каркаса v1 в ядро v2 и повторное открытие', () async {
+  test('Миграция пустого каркаса v1 в ядро v3 и повторное открытие', () async {
     final directory = await Directory.systemTemp.createTemp('delta-migration-');
     addTearDown(() => directory.delete(recursive: true));
     final file = File('${directory.path}/sample.db');
@@ -29,7 +29,7 @@ void main() {
         final version = await db
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.data.values.single, 2);
+        expect(version.data.values.single, 3);
         expect(
           await db.customSelect('PRAGMA foreign_key_check').get(),
           isEmpty,

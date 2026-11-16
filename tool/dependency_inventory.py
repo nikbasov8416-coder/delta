@@ -69,7 +69,7 @@ def main():
         digest = hashlib.sha256(license_file.read_bytes()).hexdigest()
         rows.append(f'| {name} | {version} | {group} | [{identity}]({source}) | `{digest}` |')
 
-    header = '''# Зависимости Delta — этап 2
+    header = '''# Зависимости Delta — этап 3
 
 Состояние: 2026-11-16. Список подготовлен Codex для ревью Claude;
 окончательное принятие — владельцем. Версии взяты из `pubspec.lock`, лицензии —
@@ -100,7 +100,8 @@ material_ui 1.1.0 соответствует шаблону Flutter 3.50.0. Ст
 официальный отдельный пакет Material. Это не сторонняя тема интерфейса.
 
 На этапе 2 добавлены flutter_secure_storage, local_auth, cryptography (PBKDF2),
-path_provider и uuid. fl_chart, Argon2id и HTTP/WebDAV-клиент добавляются
+path_provider и uuid. Этап 3 добавляет xml/petitparser; HTTP — стандартный dart:io.
+fl_chart, Argon2id и WebDAV-клиент добавляются
 на профильных этапах с отдельной проверкой лицензий. Список ниже содержит и служебные зависимости
 тестов/генератора: не все они попадают в APK/EXE.
 
