@@ -290,7 +290,8 @@ class PublicRateGateway implements RateGateway {
               'pair': krakenPairs[code]!,
               if (!current) 'interval': '1440',
               if (!current)
-                'since': '${calendarDay(date).millisecondsSinceEpoch ~/ 1000}',
+                'since':
+                    '${calendarDay(date).millisecondsSinceEpoch ~/ 1000 - 86400}',
             },
           );
           final value =

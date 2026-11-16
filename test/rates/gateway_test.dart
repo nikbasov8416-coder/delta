@@ -38,6 +38,32 @@ class FixtureTransport implements RateTransport {
 }
 
 void main() {
+  test(
+    'Kraken since на сутки раньше; из трёх свечей выбирается нужная дата UTC',
+    () async {
+      final transport = FixtureTransport()..failGecko = true;
+      final result = await PublicRateGateway(
+        transport,
+        now: () => DateTime.utc(2026, 1, 12),
+      ).fetch({'BTC'}, DateTime.utc(2026, 1, 10, 17, 30));
+      final request = transport.seen.singleWhere(
+        (uri) => uri.path == '/0/public/OHLC',
+      );
+      expect(
+        request.queryParameters['since'],
+        '${DateTime.utc(2026, 1, 9).millisecondsSinceEpoch ~/ 1000}',
+      );
+      expect(result.errors, isEmpty);
+      expect(
+        result.quotes['BTC']!.value,
+        Decimal.parse('12.34567890123456789') * Decimal.parse('73.25'),
+      );
+      expect(
+        result.quotes['BTC']!.effectiveAt,
+        startsWith('2026-01-10T00:00:00.000Z'),
+      );
+    },
+  );
   test('Маршруты ЦБ и CoinGecko history, номинал и календарная дата', () async {
     final transport = FixtureTransport();
     final gateway = PublicRateGateway(
