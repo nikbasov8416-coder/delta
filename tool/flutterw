@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Локальный запуск на сервере: кэши и временные файлы внутри проекта.
+set -euo pipefail
+APP_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="$(dirname -- "$APP_DIR")"
+SDK="$PROJECT_DIR/tools/flutter"
+WORK="$PROJECT_DIR/tmp/delta-setup"
+export PUB_CACHE="$PROJECT_DIR/tools/flutter-pub-cache"
+export XDG_CONFIG_HOME="$WORK/config"
+export XDG_CACHE_HOME="$WORK/cache"
+export TMPDIR="$WORK/temp"
+export CI=true
+export FLUTTER_SUPPRESS_ANALYTICS=true
+export DART_SUPPRESS_ANALYTICS=true
+export DASH__SUPPRESS_ANALYTICS=true
+mkdir -p "$PUB_CACHE" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$TMPDIR"
+cd "$APP_DIR"
+exec "$SDK/bin/flutter" "$@"

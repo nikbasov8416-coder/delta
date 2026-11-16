@@ -1,0 +1,7 @@
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          # Менеджеры таблиц понадобятся после добавления схемы на этапе 2.
+          generate_manager: false
