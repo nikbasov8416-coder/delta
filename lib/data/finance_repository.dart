@@ -928,8 +928,9 @@ class DriftFinanceRepository implements FinanceRepository {
   }
 
   @override
-  Future<List<ReportSnapshot>> reportSnapshots() async {
+  Future<ReportData> reportSnapshots() async {
     final result = <ReportSnapshot>[];
+    final excludedDates = <String>[];
     final headers = await query(
       "SELECT * FROM snapshot WHERE status='fixed' AND deleted=0 ORDER BY date,created_at,id",
     );
@@ -942,11 +943,23 @@ class DriftFinanceRepository implements FinanceRepository {
         'SELECT sr.*,c.code FROM snapshot_rate sr JOIN currency c ON c.id=sr.currency_id WHERE sr.snapshot_id=? AND sr.deleted=0',
         [header.id],
       );
-      for (final row in rates) {
-        if (row.text('code') != 'RUB' &&
-            row.text('rate_date') != header.text('date')) {
-          throw StateError('Дата слепка изменилась. Обновите его курсы.');
-        }
+      final rateByCode = {for (final row in rates) row.text('code'): row};
+      final invalidRates =
+          rates.any((rate) {
+            if (rate.text('code') == 'RUB') {
+              return rate.decimal('rate') != Decimal.one;
+            }
+            return rate.text('rate_date') != header.text('date') ||
+                rate.decimal('rate') <= Decimal.zero;
+          }) ||
+          lines.any(
+            (line) =>
+                line.text('code') != 'RUB' &&
+                !rateByCode.containsKey(line.text('code')),
+          );
+      if (invalidRates) {
+        excludedDates.add(header.text('date'));
+        continue;
       }
       final report = ReportSnapshot(
         id: header.id,
@@ -971,7 +984,7 @@ class DriftFinanceRepository implements FinanceRepository {
       report.totals;
       result.add(report);
     }
-    return result;
+    return ReportData(result, excludedDates: excludedDates);
   }
 
   @override

@@ -1,3 +1,4 @@
+import 'package:delta/domain/reports/reports.dart';
 import 'package:delta/ui/app.dart';
 import 'package:delta/ui/providers.dart';
 import 'package:delta/ui/money_visibility.dart';
@@ -14,6 +15,103 @@ import '../widget_test.dart' show TestPin;
 import 'reports_test.dart' show snapshot, position;
 
 void main() {
+  testWidgets(
+    'Три слепка: сбитая дата или отсутствующий курс исключают только средний',
+    (tester) async {
+      final repo = await testRepository();
+      addTearDown(repo.close);
+      final overview = await repo.overview();
+      final usd = overview.currencies
+          .firstWhere((c) => c.text('code') == 'USD')
+          .id;
+      await repo.saveStorage(
+        name: 'Выдуманный счёт',
+        type: 'cash',
+        liquidityId: overview.liquidity.first.id,
+        organization: '',
+        note: '',
+        archived: false,
+        currencyIds: [usd],
+      );
+      final ids = <String>[];
+      for (var month = 1; month <= 3; month++) {
+        final id = await repo.createSnapshot('2026-0$month-10', '');
+        final line = (await repo.snapshot(id)).lines.single;
+        await repo.saveLine(line.id, '${month * 10}', '0', '');
+        await repo.saveRate(id, usd, '90');
+        await repo.finalizeSnapshot(id);
+        ids.add(id);
+      }
+      await repo.db.customStatement(
+        "UPDATE snapshot_rate SET rate_date='2026-02-09' WHERE snapshot_id=?",
+        [ids[1]],
+      );
+      Future<void> checkReports() async {
+        final result = await repo.reportSnapshots();
+        expect(result.snapshots.map((s) => s.id), [ids.first, ids.last]);
+        expect(result.excludedDates, ['2026-02-10']);
+        await tester.pumpWidget(
+          ProviderScope(
+            key: UniqueKey(),
+            overrides: [
+              secretStoreProvider.overrideWithValue(MemorySecrets()),
+              reportSnapshotsProvider.overrideWith((ref) async => result),
+            ],
+            child: const MaterialApp(
+              home: Scaffold(body: SingleChildScrollView(child: ReportsView())),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Слепок от 10.02.2026 не учтён: обновите его курсы'),
+          findsOneWidget,
+        );
+        final charts = tester.widgetList<LineChart>(find.byType(LineChart));
+        expect(charts, hasLength(4));
+        for (final chart in charts) {
+          expect(chart.data.lineBarsData.first.spots, hasLength(2));
+        }
+        final selectors = tester.widgetList<DropdownButton<String>>(
+          find.byType(DropdownButton<String>),
+        );
+        expect(selectors, hasLength(2));
+        for (final selector in selectors) {
+          expect(selector.items!.map((item) => item.value), [
+            ids.first,
+            ids.last,
+          ]);
+        }
+      }
+
+      await checkReports();
+      // Тот же пользовательский результат при отсутствующем курсе.
+      await repo.db.customStatement(
+        'DELETE FROM snapshot_rate WHERE snapshot_id=?',
+        [ids[1]],
+      );
+      await checkReports();
+      // Даже если пригодных слепков нет, причины исключения остаются на экране.
+      await repo.db.customStatement('DELETE FROM snapshot_rate');
+      final empty = await repo.reportSnapshots();
+      expect(empty.snapshots, isEmpty);
+      await tester.pumpWidget(
+        ProviderScope(
+          key: UniqueKey(),
+          overrides: [
+            reportSnapshotsProvider.overrideWith((ref) async => empty),
+          ],
+          child: const MaterialApp(home: Scaffold(body: ReportsView())),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('не учтён: обновите его курсы'),
+        findsNWidgets(3),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
   testWidgets(
     'Период меняет точки; суммы/подсказки скрываются и состояние хранится локально',
     (tester) async {
@@ -35,7 +133,7 @@ void main() {
         key: ValueKey(key),
         overrides: [
           secretStoreProvider.overrideWithValue(secrets),
-          reportSnapshotsProvider.overrideWith((ref) async => data),
+          reportSnapshotsProvider.overrideWith((ref) async => ReportData(data)),
         ],
         child: MaterialApp(
           home: Scaffold(

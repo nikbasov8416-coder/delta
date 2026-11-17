@@ -6,6 +6,17 @@ enum ReportPeriod { all, year, halfYear }
 
 enum ReportChart { total, liquidity, currency, family }
 
+/// Пригодные для расчётов слепки и даты слепков, которым нужно обновить курсы.
+class ReportData {
+  ReportData(
+    List<ReportSnapshot> snapshots, {
+    List<String> excludedDates = const [],
+  }) : snapshots = List.unmodifiable(snapshots),
+       excludedDates = List.unmodifiable(excludedDates);
+  final List<ReportSnapshot> snapshots;
+  final List<String> excludedDates;
+}
+
 class ReportPosition {
   const ReportPosition({
     required this.storageId,

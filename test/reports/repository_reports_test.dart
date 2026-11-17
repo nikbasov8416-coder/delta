@@ -45,7 +45,7 @@ void main() {
         archived: true,
         currencyIds: [rub],
       );
-      final reports = await repo.reportSnapshots();
+      final reports = (await repo.reportSnapshots()).snapshots;
       expect(reports, hasLength(1));
       expect(reports.single.id, fixed);
       expect(reports.single.positions.single.liquidityId, newLevel);

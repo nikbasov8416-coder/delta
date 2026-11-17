@@ -143,6 +143,6 @@ final syncServiceProvider = FutureProvider.autoDispose<SyncService?>((
   return service;
 });
 
-final reportSnapshotsProvider = FutureProvider<List<ReportSnapshot>>(
+final reportSnapshotsProvider = FutureProvider<ReportData>(
   (ref) async => (await ref.watch(repositoryProvider.future)).reportSnapshots(),
 );

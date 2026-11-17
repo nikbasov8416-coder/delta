@@ -16,7 +16,7 @@ class MiniReport extends ConsumerWidget {
       .when(
         loading: () => const LinearProgressIndicator(),
         error: (_, _) => const Text('Динамика временно недоступна.'),
-        data: (data) => data.isEmpty
+        data: (result) => result.snapshots.isEmpty
             ? const SizedBox.shrink()
             : Card(
                 child: InkWell(
@@ -29,7 +29,7 @@ class MiniReport extends ConsumerWidget {
                         const Text('Динамика общего итога'),
                         IgnorePointer(
                           child: ReportPlot(
-                            snapshots: data,
+                            snapshots: result.snapshots,
                             chart: ReportChart.total,
                             mini: true,
                           ),
@@ -60,9 +60,24 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
         error: (_, _) => const Text(
           'Не удалось построить отчёт. Проверьте заполнение курсов зафиксированных слепков.',
         ),
-        data: (all) {
+        data: (result) {
+          final all = result.snapshots;
+          final warnings = [
+            for (final date in result.excludedDates)
+              Text(
+                'Слепок от ${date.substring(8, 10)}.${date.substring(5, 7)}.${date.substring(0, 4)} не учтён: обновите его курсы',
+              ),
+          ];
           if (all.isEmpty) {
-            return const Text('Пока нет зафиксированных слепков.');
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ...warnings,
+                const Text(
+                  'Пока нет зафиксированных слепков с актуальными курсами.',
+                ),
+              ],
+            );
           }
           final filtered = reportPeriod(all, period, DateTime.now());
           final first =
@@ -103,6 +118,7 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              ...warnings,
               SegmentedButton<ReportPeriod>(
                 segments: const [
                   ButtonSegment(
@@ -143,7 +159,7 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const Text(
-                'Период выше относится к графикам. Для сравнения доступны все зафиксированные слепки.',
+                'Период выше относится к графикам. Для сравнения доступны зафиксированные слепки с актуальными курсами.',
               ),
               if (all.length < 2)
                 const Text('Для сравнения нужны два зафиксированных слепка.')

@@ -50,6 +50,6 @@ abstract interface class FinanceRepository {
   Future<void> saveSnapshotHeader(String id, String date, String note);
   Future<void> finalizeSnapshot(String id);
   Future<SnapshotTotals> totals(String id);
-  Future<List<ReportSnapshot>> reportSnapshots();
+  Future<ReportData> reportSnapshots();
   Future<void> close();
 }
