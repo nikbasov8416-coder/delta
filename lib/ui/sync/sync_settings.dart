@@ -1,4 +1,8 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
+
+import 'yandex_oauth.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/sync/sync_service.dart';
@@ -89,12 +93,47 @@ class _Connect extends StatefulWidget {
 }
 
 class _ConnectState extends State<_Connect> {
-  final login = TextEditingController(),
-      password = TextEditingController(),
+  final token = TextEditingController(),
       phrase = TextEditingController(),
       confirmation = TextEditingController();
   bool replace = true, accepted = false, busy = false;
   String? error;
+  Future<void> _oauthLink() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Войти через Яндекс'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Скопируйте ссылку и откройте её в браузере. После разрешения доступа скопируйте токен со страницы Яндекса и вставьте его в Delta.',
+              ),
+              SelectableText(yandexAuthorizationUri.toString()),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(
+                ClipboardData(text: yandexAuthorizationUri.toString()),
+              );
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+            child: const Text('Скопировать ссылку'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     if (widget.create && phrase.text != confirmation.text) {
       setState(() => error = 'Парольные фразы не совпадают.');
@@ -106,8 +145,7 @@ class _ConnectState extends State<_Connect> {
     });
     try {
       await widget.service.configure(
-        login: login.text,
-        password: password.text,
+        token: token.text,
         phrase: phrase.text,
         create: widget.create,
         replace: replace,
@@ -143,19 +181,20 @@ class _ConnectState extends State<_Connect> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'Используйте логин Яндекса и отдельный пароль приложения для Диска.',
+                'Войдите через Яндекс в браузере, разрешите доступ к папке приложения и вставьте полученный токен. Пароль Яндекса сюда вводить не нужно.',
+              ),
+              OutlinedButton(
+                onPressed: busy ? null : _oauthLink,
+                child: const Text('Войти через Яндекс'),
               ),
               TextField(
-                controller: login,
-                enabled: !busy,
-                decoration: const InputDecoration(labelText: 'Логин Яндекса'),
-              ),
-              TextField(
-                controller: password,
+                controller: token,
                 enabled: !busy,
                 obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
                 decoration: const InputDecoration(
-                  labelText: 'Пароль приложения Яндекса',
+                  labelText: 'OAuth-токен Яндекса',
                 ),
               ),
               TextField(
@@ -227,8 +266,7 @@ class _ConnectState extends State<_Connect> {
   );
   @override
   void dispose() {
-    login.dispose();
-    password.dispose();
+    token.dispose();
     phrase.dispose();
     confirmation.dispose();
     super.dispose();

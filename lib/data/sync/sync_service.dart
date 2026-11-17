@@ -11,7 +11,7 @@ import 'sync_error.dart';
 import 'sync_journal.dart';
 import 'sync_storage.dart';
 
-typedef DiskFactory = SyncDisk Function(String login, String password);
+typedef DiskFactory = SyncDisk Function(String token);
 typedef CryptoDeriver = Future<SyncCrypto> Function(
   String phrase,
   Map<String, dynamic> meta,
@@ -69,11 +69,20 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> load() async {
+    _disk?.close();
+    _disk = null;
+    _crypto = null;
+    _meta = null;
+    error = null;
     try {
       final saved = await secrets.read(credentialsKey);
       lastSync = DateTime.tryParse(await journal.get('last_sync') ?? '');
       if (saved == null || saved.isEmpty) return;
       final config = jsonDecode(saved) as Map<String, dynamic>;
+      if (config['provider'] != 'yandex-rest-v1') {
+        lastSync = null;
+        return; // Старые login/password не являются настройкой REST/OAuth.
+      }
       final meta = Map<String, dynamic>.from(config['meta'] as Map);
       SyncCrypto.validate(meta);
       final key = base64Decode(config['key'] as String);
@@ -83,10 +92,7 @@ class SyncService extends ChangeNotifier {
       _alive();
       _meta = meta;
       _crypto = crypto;
-      _disk = diskFactory(
-        config['login'] as String,
-        config['password'] as String,
-      );
+      _disk = diskFactory(config['token'] as String);
     } catch (_) {
       error =
           'Не удалось открыть настройку синхронизации. Подключитесь заново.';
@@ -97,8 +103,7 @@ class SyncService extends ChangeNotifier {
   Future<bool> hasLocalData() => journal.hasData();
 
   Future<void> configure({
-    required String login,
-    required String password,
+    required String token,
     required String phrase,
     required bool create,
     bool replace = true,
@@ -106,9 +111,7 @@ class SyncService extends ChangeNotifier {
     if (_flight != null) {
       throw const SyncFailure('Дождитесь завершения синхронизации.');
     }
-    final future = _guard(
-      () => _configure(login, password, phrase, create, replace),
-    );
+    final future = _guard(() => _configure(token, phrase, create, replace));
     _flight = future.whenComplete(() {
       _flight = null;
       _notify();
@@ -118,8 +121,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _configure(
-    String login,
-    String password,
+    String token,
     String phrase,
     bool create,
     bool replace,
@@ -130,7 +132,7 @@ class SyncService extends ChangeNotifier {
         'Используйте парольную фразу не короче 12 символов.',
       );
     }
-    final disk = diskFactory(login.trim(), password);
+    final disk = diskFactory(token.trim());
     var installed = false;
     try {
       if (create) {
@@ -214,8 +216,8 @@ class SyncService extends ChangeNotifier {
       await secrets.write(
         credentialsKey,
         jsonEncode({
-          'login': login.trim(),
-          'password': password,
+          'provider': 'yandex-rest-v1',
+          'token': token.trim(),
           'meta': meta,
           'key': base64Encode(await crypto.key.extractBytes()),
         }),

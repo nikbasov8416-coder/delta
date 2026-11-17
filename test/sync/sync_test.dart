@@ -15,7 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../support/test_database.dart';
 import 'fake_disk.dart';
 
-const syntheticAppSecret = 'synthetic-app-secret';
+const syntheticToken = 'synthetic-token';
 const phrase = 'выдуманная длинная фраза для тестов';
 String device(int n) =>
     '00000000-0000-4000-8000-${n.toString().padLeft(12, '0')}';
@@ -44,7 +44,7 @@ class TestDevice {
     final sync = SyncService(
       repo,
       secrets,
-      diskFactory: (_, _) => disk,
+      diskFactory: (_) => disk,
       derive: fastKdf,
     );
     return TestDevice(repo, secrets, sync);
@@ -56,8 +56,7 @@ class TestDevice {
     String passphrase = phrase,
   }) async {
     await sync.configure(
-      login: 'synthetic-login',
-      password: syntheticAppSecret,
+      token: syntheticToken,
       phrase: passphrase,
       create: create,
       replace: replace,
@@ -343,7 +342,7 @@ void main() {
       final retry = SyncService(
         a.repo,
         a.secrets,
-        diskFactory: (_, _) => disk,
+        diskFactory: (_) => disk,
         derive: fastKdf,
       );
       addTearDown(retry.dispose);
@@ -395,7 +394,7 @@ void main() {
     final reopened = SyncService(
       a.repo,
       a.secrets,
-      diskFactory: (_, _) => disk,
+      diskFactory: (_) => disk,
       derive: fastKdf,
     );
     addTearDown(reopened.dispose);
@@ -686,6 +685,35 @@ void main() {
       await deleted.close();
     }
   });
+
+  test(
+    'Настройка REST хранит токен; старый формат WebDAV считается ненастроенным',
+    () async {
+      await a.setup(create: true);
+      expect(a.sync.error, isNull);
+      final saved = jsonDecode(
+        a.secrets.values[SyncService.credentialsKey]!,
+      ) as Map<String, dynamic>;
+      expect(saved['provider'], 'yandex-rest-v1');
+      expect(saved['token'], syntheticToken);
+      expect(saved.containsKey('login'), isFalse);
+      expect(saved.containsKey('password'), isFalse);
+      expect(saved.values, isNot(contains(phrase)));
+      final legacy = {...saved}
+        ..remove('provider')
+        ..remove('token');
+      legacy['login'] = 'synthetic-login';
+      legacy['password'] = syntheticToken;
+      b.secrets.values[SyncService.credentialsKey] = jsonEncode(legacy);
+      final before = await b.sync.journal.changes();
+      await b.sync.load();
+      expect(b.sync.enabled, isFalse);
+      expect(b.sync.error, isNull);
+      expect(b.sync.lastSync, isNull);
+      expect(await b.sync.journal.changes(), before);
+      expect(jsonDecode(b.secrets.values[SyncService.credentialsKey]!), legacy);
+    },
+  );
 
   test('Ограничение WebDAV: никакого другого хоста, каталога, traversal', () {
     for (final path in [

@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/database/app_database.dart';
 import '../data/sync/sync_service.dart';
-import '../data/sync/webdav.dart';
+import '../data/sync/yandex_disk_rest.dart';
 import '../data/rates/source_gateway.dart';
 import '../data/rates/transport.dart';
 import '../domain/rates/rates.dart';
@@ -105,7 +105,7 @@ final syncServiceProvider = FutureProvider.autoDispose<SyncService?>((
   final service = SyncService(
     repository,
     ref.read(secretStoreProvider),
-    diskFactory: (login, password) => YandexWebDav(login, password),
+    diskFactory: (token) => YandexDiskRest(token),
   );
   var disposed = false;
   DateTime? previous;
