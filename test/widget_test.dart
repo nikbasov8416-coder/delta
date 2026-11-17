@@ -252,6 +252,11 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '135790');
     await tester.tap(find.text('Войти'));
     await tester.pumpAndSettle();
+    expect(find.text('По валютам'), findsNothing);
+    expect(find.textContaining('Действует / наблюдение:'), findsNothing);
+    expect(find.text('По местам хранения'), findsOneWidget);
+    expect(find.text('По ликвидности'), findsOneWidget);
+    expect(find.textContaining('Всего: 30,00 ₽'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('По сегодняшнему'), 200);
     await tester.tap(find.text('По сегодняшнему'));
     await tester.pumpAndSettle();
@@ -265,5 +270,11 @@ void main() {
     await tester.tap(find.text('По курсу слепка'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Всего: 30,00 ₽'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Открыть слепок'), 200);
+    await tester.tap(find.text('Открыть слепок'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('По валютам'), 300);
+    expect(find.text('По валютам'), findsOneWidget);
+    expect(find.textContaining('Действует / наблюдение:'), findsWidgets);
   });
 }

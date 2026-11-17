@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
 import '../../domain/rates/rates.dart';
 
 abstract interface class RateTransport {
@@ -10,7 +12,35 @@ abstract interface class RateTransport {
 }
 
 class SourceHttpTransport implements RateTransport {
-  final _client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+  SourceHttpTransport({HttpClient Function(SecurityContext?)? createClient})
+    : _createClient = createClient ?? _httpClient {
+    _client = _newClient(null);
+  }
+
+  static const cbrRootAsset =
+      'assets/certificates/harica_tls_rsa_root_ca_2021.crt';
+  final HttpClient Function(SecurityContext?) _createClient;
+  late final HttpClient _client;
+  HttpClient? _cbrClient;
+  Future<HttpClient>? _cbrFuture;
+
+  static HttpClient _httpClient(SecurityContext? context) =>
+      HttpClient(context: context);
+
+  HttpClient _newClient(SecurityContext? context) =>
+      _createClient(context)..connectionTimeout = const Duration(seconds: 8);
+
+  Future<HttpClient> _loadCbrClient() async {
+    final pem = await rootBundle.load(cbrRootAsset);
+    // Системные корни сохраняются. Этот контекст не используется другими хостами.
+    final context = SecurityContext(withTrustedRoots: true)
+      ..setTrustedCertificatesBytes(
+        pem.buffer.asUint8List(pem.offsetInBytes, pem.lengthInBytes),
+      );
+    if (_closed) throw const RateFailure('Загрузка отменена');
+    return _cbrClient = _newClient(context);
+  }
+
   static const allowedHosts = {
     'www.cbr.ru',
     'api.coingecko.com',
@@ -30,7 +60,10 @@ class SourceHttpTransport implements RateTransport {
       HttpClientRequest? request;
       try {
         return await (() async {
-          request = await _client.getUrl(uri);
+          final client = uri.host == 'www.cbr.ru'
+              ? await (_cbrFuture ??= _loadCbrClient())
+              : _client;
+          request = await client.getUrl(uri);
           request!.followRedirects = false;
           request!.headers.set(
             HttpHeaders.acceptHeader,
@@ -64,7 +97,7 @@ class SourceHttpTransport implements RateTransport {
           onTimeout: () {
             request?.abort();
             throw const RateFailure(
-              'Источник не ответил вовремя. Введите курс вручную.',
+              'Тайм-аут источника. Введите курс вручную.',
             );
           },
         );
@@ -72,9 +105,23 @@ class SourceHttpTransport implements RateTransport {
         await Future<void>.delayed(const Duration(seconds: 2));
       } on RateFailure {
         rethrow;
+      } on HandshakeException {
+        throw const RateFailure(
+          'Ошибка сертификата источника. Введите курс вручную.',
+        );
+      } on TimeoutException {
+        throw const RateFailure('Тайм-аут источника. Введите курс вручную.');
+      } on SocketException {
+        throw const RateFailure(
+          'Сетевая ошибка источника. Введите курс вручную.',
+        );
+      } on HttpException {
+        throw const RateFailure(
+          'Сетевая ошибка источника. Введите курс вручную.',
+        );
       } catch (_) {
         throw const RateFailure(
-          'Ошибка соединения с источником. Введите курс вручную.',
+          'Не удалось обработать ответ источника. Введите курс вручную.',
         );
       }
     }
@@ -85,6 +132,7 @@ class SourceHttpTransport implements RateTransport {
   void close() {
     _closed = true;
     _client.close(force: true);
+    _cbrClient?.close(force: true);
   }
 }
 

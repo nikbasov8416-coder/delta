@@ -40,3 +40,5 @@ hooks:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/certificates/harica_tls_rsa_root_ca_2021.crt

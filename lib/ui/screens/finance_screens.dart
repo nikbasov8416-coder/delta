@@ -306,7 +306,7 @@ class FinanceScreen extends ConsumerWidget {
     if (data.snapshots.isNotEmpty) ...[
       Text('Последний слепок: ${data.snapshots.first.text('date')}'),
       if (data.snapshots.first.text('status') == 'fixed')
-        TotalsView(id: data.snapshots.first.id),
+        TotalsView(id: data.snapshots.first.id, showCurrencyDetails: false),
       OutlinedButton(
         onPressed: () => context.go('/snapshots/${data.snapshots.first.id}'),
         child: const Text('Открыть слепок'),
@@ -964,8 +964,13 @@ class SnapshotScreen extends ConsumerWidget {
 }
 
 class TotalsView extends ConsumerStatefulWidget {
-  const TotalsView({required this.id, super.key});
+  const TotalsView({
+    required this.id,
+    this.showCurrencyDetails = true,
+    super.key,
+  });
   final String id;
+  final bool showCurrencyDetails;
   @override
   ConsumerState<TotalsView> createState() => _TotalsViewState();
 }
@@ -1042,21 +1047,26 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     line('Всего', totals.rubles),
-                    for (final quote in state.data!.rates)
-                      Text(
-                        '${quote.code}: ${quote.value.toString().replaceAll('.', ',')} ₽ · ${rateSourceLabel(quote.source)}${quote.cached ? ' · кэш' : ''}\nДействует / наблюдение: ${quote.effectiveAt}; получен ${quote.fetchedAt.toLocal()}',
-                      ),
-                    const Text('По валютам'),
-                    for (final entry in totals.byCurrency.entries)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${entry.key}: ${formatMoney(entry.value.total, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · семейные ${formatMoney(entry.value.family, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · личные ${formatMoney(entry.value.personal, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))}',
-                          ),
-                          line('В рублях', totals.byCurrencyRubles[entry.key]!),
-                        ],
-                      ),
+                    if (widget.showCurrencyDetails) ...[
+                      for (final quote in state.data!.rates)
+                        Text(
+                          '${quote.code}: ${quote.value.toString().replaceAll('.', ',')} ₽ · ${rateSourceLabel(quote.source)}${quote.cached ? ' · кэш' : ''}\nДействует / наблюдение: ${quote.effectiveAt}; получен ${quote.fetchedAt.toLocal()}',
+                        ),
+                      const Text('По валютам'),
+                      for (final entry in totals.byCurrency.entries)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${entry.key}: ${formatMoney(entry.value.total, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · семейные ${formatMoney(entry.value.family, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · личные ${formatMoney(entry.value.personal, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))}',
+                            ),
+                            line(
+                              'В рублях',
+                              totals.byCurrencyRubles[entry.key]!,
+                            ),
+                          ],
+                        ),
+                    ],
                     const Divider(),
                     const Text('По местам хранения'),
                     for (final entry in totals.byStorageRubles.entries) ...[
