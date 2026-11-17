@@ -108,7 +108,7 @@ void main() {
             .data
             .values
             .single,
-        3,
+        4,
       );
       expect((await repo.totals(id(4))).rubles.total.toString(), '20');
     } finally {

@@ -29,7 +29,7 @@ void main() {
         final version = await db
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.data.values.single, 3);
+        expect(version.data.values.single, 4);
         expect(
           await db.customSelect('PRAGMA foreign_key_check').get(),
           isEmpty,

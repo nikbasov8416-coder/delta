@@ -1,3 +1,5 @@
+import '../sync/sync_settings.dart';
+
 import 'dart:io';
 import 'dart:convert';
 
@@ -254,7 +256,7 @@ class FinanceScreen extends ConsumerWidget {
               '/storage' => _storage(context, ref, data),
               '/catalogs' => _catalogs(context, ref, data),
               '/snapshots' => _snapshots(context, ref, data),
-              '/settings' => [const SecuritySettings()],
+              '/settings' => [const SyncSettings(), const SecuritySettings()],
               '/reports' => [
                 const Text(
                   'Графики и сравнение — этап 5. Итоги доступны в каждом слепке.',
@@ -1244,7 +1246,7 @@ class _SecuritySettingsState extends ConsumerState<SecuritySettings> {
       ),
       const Padding(
         padding: EdgeInsets.all(16),
-        child: Text('Синхронизация и экспорт появятся на следующих этапах.'),
+        child: Text('Экспорт появится на следующем этапе.'),
       ),
     ],
   );

@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../data/database/app_database.dart';
+import '../data/sync/sync_service.dart';
+import '../data/sync/webdav.dart';
 import '../data/rates/source_gateway.dart';
 import '../data/rates/transport.dart';
 import '../domain/rates/rates.dart';
@@ -94,3 +96,37 @@ void refreshFinance(WidgetRef ref, [String? id]) {
   ref.invalidate(overviewProvider);
   if (id != null) ref.invalidate(snapshotProvider(id));
 }
+
+final syncServiceProvider = FutureProvider.autoDispose<SyncService?>((
+  ref,
+) async {
+  final repository = await ref.watch(repositoryProvider.future);
+  if (repository is! DriftFinanceRepository) return null;
+  final service = SyncService(
+    repository,
+    ref.read(secretStoreProvider),
+    diskFactory: (login, password) => YandexWebDav(login, password),
+  );
+  var disposed = false;
+  DateTime? previous;
+  void updated() {
+    if (disposed) return;
+    if (service.lastSync != previous) {
+      previous = service.lastSync;
+      ref.invalidate(overviewProvider);
+      ref.invalidate(snapshotProvider);
+    }
+  }
+
+  ref.onDispose(() {
+    disposed = true;
+    repository.onChanged = null;
+    service.removeListener(updated);
+    service.dispose();
+  });
+  service.addListener(updated);
+  repository.onChanged = service.schedule;
+  await service.load();
+  if (!disposed) service.schedule();
+  return service;
+});

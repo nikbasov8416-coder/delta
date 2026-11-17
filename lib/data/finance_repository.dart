@@ -23,6 +23,7 @@ class DriftFinanceRepository implements FinanceRepository {
   }) : clock = clock ?? HybridClock(deviceId),
        now = now ?? DateTime.now;
   final AppDatabase db;
+  void Function()? onChanged;
   final String deviceId;
   final HybridClock clock;
   final RateGateway? gateway;
@@ -78,11 +79,15 @@ class DriftFinanceRepository implements FinanceRepository {
     String table,
     Map<String, Object?> data, {
     bool ignore = false,
-  }) => db.customStatement(
-    'INSERT ${ignore ? 'OR IGNORE ' : ''}INTO $table '
-    '(${data.keys.join(',')}) VALUES (${List.filled(data.length, '?').join(',')})',
-    data.values.toList(),
-  );
+  }) async {
+    await db.customStatement(
+      'INSERT ${ignore ? 'OR IGNORE ' : ''}INTO $table '
+      '(${data.keys.join(',')}) VALUES (${List.filled(data.length, '?').join(',')})',
+      data.values.toList(),
+    );
+    onChanged?.call();
+  }
+
   Future<void> _update(
     String table,
     String id,
@@ -93,6 +98,7 @@ class DriftFinanceRepository implements FinanceRepository {
       'UPDATE $table SET ${fields.keys.map((k) => '$k=?').join(',')} WHERE id=?',
       [...fields.values, id],
     );
+    onChanged?.call();
   }
 
   String _required(String value) {

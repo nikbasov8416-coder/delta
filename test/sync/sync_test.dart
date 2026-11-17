@@ -1,0 +1,573 @@
+import 'dart:convert';
+
+import 'package:cryptography/cryptography.dart';
+import 'package:drift/drift.dart' show driftRuntimeOptions;
+import 'package:delta/data/finance_repository.dart';
+import 'package:delta/data/sync/sync_crypto.dart';
+import 'package:delta/data/sync/sync_error.dart';
+import 'package:delta/data/sync/sync_journal.dart';
+import 'package:delta/data/sync/sync_service.dart';
+import 'package:delta/data/sync/webdav.dart';
+import 'package:delta/data/sync/sync_storage.dart';
+import 'package:delta/domain/sync/hlc.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import '../support/test_database.dart';
+import 'fake_disk.dart';
+
+const syntheticAppSecret = 'synthetic-app-secret';
+const phrase = 'выдуманная длинная фраза для тестов';
+String device(int n) =>
+    '00000000-0000-4000-8000-${n.toString().padLeft(12, '0')}';
+
+// KDF подменена только в интеграционных тестах. Настоящая Argon2id проверяется ниже.
+Future<SyncCrypto> fastKdf(String phrase, Map<String, dynamic> meta) async =>
+    SyncCrypto(
+      SecretKey(
+        (await Sha256().hash(utf8.encode('$phrase|${meta['salt']}'))).bytes,
+      ),
+    );
+
+class TestDevice {
+  TestDevice(this.repo, this.secrets, this.sync);
+  final DriftFinanceRepository repo;
+  final MemorySecrets secrets;
+  final SyncService sync;
+  static Future<TestDevice> open(FakeDisk disk, int n) async {
+    final repo = DriftFinanceRepository(
+      memoryDatabase(),
+      device(n),
+      clock: HybridClock(device(n), milliseconds: () => 1700000000000),
+    );
+    await repo.initialize();
+    final secrets = MemorySecrets();
+    final sync = SyncService(
+      repo,
+      secrets,
+      diskFactory: (_, _) => disk,
+      derive: fastKdf,
+    );
+    return TestDevice(repo, secrets, sync);
+  }
+
+  Future<void> setup({
+    bool create = false,
+    bool replace = true,
+    String passphrase = phrase,
+  }) async {
+    await sync.configure(
+      login: 'synthetic-login',
+      password: syntheticAppSecret,
+      phrase: passphrase,
+      create: create,
+      replace: replace,
+    );
+  }
+
+  Future<void> close() async {
+    sync.dispose();
+    await repo.close();
+  }
+}
+
+void main() {
+  // Разные memory-executor намеренно моделируют независимые устройства.
+  setUpAll(() => driftRuntimeOptions.dontWarnAboutMultipleDatabases = true);
+  tearDownAll(() => driftRuntimeOptions.dontWarnAboutMultipleDatabases = false);
+  test('Argon2id → AES-256-GCM: туда-обратно, неверная фраза, подмена пути и шифротекста', () async {
+    final meta = SyncCrypto.header();
+    final crypto = await SyncCrypto.derive(phrase, meta);
+    final check = await crypto.encrypt(
+      utf8.encode(SyncCrypto.checkText),
+      SyncCrypto.checkAad(meta),
+    );
+    meta['check'] = base64Encode(check);
+    await crypto.check(meta);
+    final same = await SyncCrypto.derive(phrase, meta);
+    final cipher = await crypto.encrypt(
+      utf8.encode('Выдуманная запись'),
+      'dataset|device|1',
+    );
+    expect(
+      utf8.decode(await same.decrypt(cipher, 'dataset|device|1')),
+      'Выдуманная запись',
+    );
+    final wrong = await SyncCrypto.derive('другая выдуманная фраза', meta);
+    await expectLater(
+      wrong.check(meta),
+      throwsA(
+        isA<SyncFailure>().having(
+          (e) => e.message,
+          'причина',
+          contains('Неверная парольная фраза'),
+        ),
+      ),
+    );
+    await expectLater(
+      same.decrypt(cipher, 'dataset|device|2'),
+      throwsA(isA<SyncFailure>()),
+    );
+    cipher[cipher.length - 1] ^= 1;
+    await expectLater(
+      same.decrypt(cipher, 'dataset|device|1'),
+      throwsA(isA<SyncFailure>()),
+    );
+    expect(
+      () => SyncCrypto.validate({...meta, 'memory': 999999999}),
+      throwsA(isA<SyncFailure>()),
+    );
+  }, timeout: const Timeout(Duration(minutes: 5)));
+
+  late FakeDisk disk;
+  late TestDevice a, b;
+  setUp(() async {
+    disk = FakeDisk();
+    a = await TestDevice.open(disk, 1);
+    b = await TestDevice.open(disk, 2);
+  });
+  tearDown(() async {
+    await a.close();
+    await b.close();
+  });
+
+  Future<String> addStorage(TestDevice d, String name) async {
+    final data = await d.repo.overview();
+    await d.repo.saveStorage(
+      name: name,
+      type: 'cash',
+      liquidityId: data.liquidity.first.id,
+      organization: '',
+      note: '',
+      archived: false,
+      currencyIds: [data.currencies.first.id],
+    );
+    return (await d.repo.overview()).storages.last.id;
+  }
+
+  Future<void> startBoth() async {
+    await a.setup(create: true);
+    expect(a.sync.error, isNull);
+    await b.setup();
+    expect(b.sync.error, isNull);
+  }
+
+  test('Восстановление чистого устройства полное, курс-кэш тоже; безопасность не уходит', () async {
+    await addStorage(a, 'Выдуманное место');
+    final snap = await a.repo.createSnapshot('2026-01-10', 'выдуманный слепок');
+    for (final line in (await a.repo.snapshot(snap)).lines) {
+      await a.repo.saveLine(line.id, '12', '2', 'выдуманное');
+    }
+    final rub = (await a.repo.overview()).currencies.firstWhere(
+      (c) => c.text('code') == 'RUB',
+    );
+    await a.repo.db.customStatement(
+      'INSERT INTO rate_cache(id,updated_at,device_id,deleted,currency_id,date,rate,source) VALUES (?,?,?,?,?,?,?,?)',
+      [
+        device(77),
+        a.repo.clock.next(),
+        a.repo.deviceId,
+        0,
+        rub.id,
+        '2026-01-10',
+        '1',
+        'cbr',
+      ],
+    );
+    a.secrets.values['pin_hash_v1'] = 'synthetic-local-pin';
+    await a.repo.db.customStatement(
+      'INSERT INTO settings VALUES (?,?,?,?,?,?)',
+      [
+        device(88),
+        a.repo.clock.next(),
+        a.repo.deviceId,
+        0,
+        'local-security',
+        'synthetic',
+      ],
+    );
+    await startBoth();
+    for (final table in syncTables) {
+      final left = await a.repo.query('SELECT * FROM $table ORDER BY id');
+      final right = await b.repo.query('SELECT * FROM $table ORDER BY id');
+      expect(
+        right.map((r) => r.values),
+        left.map((r) => r.values),
+        reason: table,
+      );
+    }
+    expect(await b.repo.query('SELECT * FROM settings'), isEmpty);
+    expect(b.secrets.values.containsKey('pin_hash_v1'), isFalse);
+    expect(await b.sync.journal.changes(), isEmpty);
+    expect(b.sync.lastSync, isNotNull);
+  });
+
+  test(
+    'Замена данных второго устройства; неверная фраза ничего не меняет',
+    () async {
+      await addStorage(a, 'Данные с Диска');
+      await a.setup(create: true);
+      await addStorage(b, 'Локальные данные');
+      b.secrets.values['biometric_enabled'] = 'true';
+      await b.setup(passphrase: 'неверная выдуманная фраза');
+      expect(b.sync.error, contains('Неверная парольная фраза'));
+      expect(
+        (await b.repo.overview()).storages.single.text('name'),
+        'Локальные данные',
+      );
+      expect(b.secrets.values.containsKey(SyncService.credentialsKey), isFalse);
+      await b.setup();
+      expect(b.sync.error, isNull);
+      expect(
+        (await b.repo.overview()).storages.single.text('name'),
+        'Данные с Диска',
+      );
+      expect(b.secrets.values['biometric_enabled'], 'true');
+    },
+  );
+
+  test(
+    'Явный выбор объединения сохраняет собственные данные второго устройства',
+    () async {
+      await addStorage(a, 'Первое');
+      await a.setup(create: true);
+      await addStorage(b, 'Второе');
+      await b.setup(replace: false);
+      expect(b.sync.error, isNull);
+      await a.sync.synchronize();
+      expect(
+        (await a.repo.overview()).storages.map((r) => r.text('name')).toSet(),
+        {'Первое', 'Второе'},
+      );
+    },
+  );
+
+  test(
+    'Два устройства: LWW одной записи, удаление-надгробие и повтор пачки',
+    () async {
+      await a.repo.saveLiquidity(
+        name: 'Выдуманная ликвидность',
+        order: 99,
+        color: 1,
+      );
+      final id = (await a.repo.overview()).liquidity.last.id;
+      await startBoth();
+      await a.repo.saveLiquidity(id: id, name: 'Правка A', order: 99, color: 1);
+      await b.repo.saveLiquidity(id: id, name: 'Правка B', order: 99, color: 1);
+      final ar = (await a.repo.query(
+        'SELECT * FROM liquidity_level WHERE id=?',
+        [id],
+      )).single;
+      final br = (await b.repo.query(
+        'SELECT * FROM liquidity_level WHERE id=?',
+        [id],
+      )).single;
+      final winner = ar.text('updated_at').compareTo(br.text('updated_at')) > 0
+          ? ar.text('name')
+          : br.text('name');
+      await a.sync.synchronize();
+      await b.sync.synchronize();
+      await a.sync.synchronize();
+      expect(
+        (await a.repo.query('SELECT name FROM liquidity_level WHERE id=?', [
+          id,
+        ])).single.text('name'),
+        winner,
+      );
+      expect(
+        (await b.repo.query('SELECT name FROM liquidity_level WHERE id=?', [
+          id,
+        ])).single.text('name'),
+        winner,
+      );
+      await a.repo.removeCatalogEntry('liquidity_level', id);
+      await a.sync.synchronize();
+      await b.sync.synchronize();
+      expect(
+        (await b.repo.query('SELECT deleted FROM liquidity_level WHERE id=?', [
+          id,
+        ])).single.number('deleted'),
+        1,
+      );
+      final count = (await b.repo.query(
+        'SELECT count(*) AS n FROM liquidity_level',
+      )).single.number('n');
+      await b.sync.journal.set('cursor:${a.repo.deviceId}', '0');
+      await b.sync.synchronize();
+      expect(b.sync.error, isNull);
+      expect(
+        (await b.repo.query('SELECT count(*) AS n FROM liquidity_level')).single
+            .number('n'),
+        count,
+      );
+      expect(await b.sync.journal.changes(), isEmpty);
+    },
+  );
+
+  test(
+    'Обрыв PUT: очередь/шифротекст сохраняются; повтор точно той же пачки',
+    () async {
+      await startBoth();
+      await addStorage(a, 'После обрыва');
+      disk.interruptUpload = true;
+      await a.sync.synchronize();
+      expect(a.sync.error, isNotNull);
+      final pending = await a.sync.journal.get('pending');
+      expect(pending, isNotEmpty);
+      expect(await a.sync.journal.changes(), isNotEmpty);
+      await b.sync.synchronize();
+      expect(b.sync.error, isNull);
+      expect((await b.repo.overview()).storages, isEmpty);
+      await a.sync.synchronize();
+      expect(a.sync.error, isNull);
+      await b.sync.synchronize();
+      expect(
+        (await b.repo.overview()).storages.single.text('name'),
+        'После обрыва',
+      );
+      final repeated = disk.publications.values.singleWhere(
+        (v) => v.length == 2,
+      );
+      expect(repeated.first, repeated.last);
+      expect(await a.sync.journal.changes(), isEmpty);
+    },
+  );
+
+  test(
+    'Потеря ACK после публикации; перезапуск приложения не создаёт новую пачку',
+    () async {
+      await startBoth();
+      await addStorage(a, 'ACK потерян');
+      disk.loseAck = true;
+      await a.sync.synchronize();
+      expect(a.sync.error, isNotNull);
+      final retry = SyncService(
+        a.repo,
+        a.secrets,
+        diskFactory: (_, _) => disk,
+        derive: fastKdf,
+      );
+      addTearDown(retry.dispose);
+      await retry.load();
+      expect(retry.enabled, isTrue);
+      await retry.synchronize();
+      expect(retry.error, isNull);
+      await b.sync.synchronize();
+      expect(
+        (await b.repo.overview()).storages.single.text('name'),
+        'ACK потерян',
+      );
+      final repeated = disk.publications.values.singleWhere(
+        (v) => v.length == 2,
+      );
+      expect(repeated.first, repeated.last);
+    },
+  );
+
+  test(
+    'Прерванное чтение: ни частичного применения, ни продвижения курсора',
+    () async {
+      await startBoth();
+      await addStorage(a, 'Первая пачка');
+      await a.sync.synchronize();
+      await addStorage(a, 'Вторая пачка');
+      await a.sync.synchronize();
+      final folder = '${syncRoot}log/${a.repo.deviceId}/';
+      disk.failRead = '${folder}00000000000000000003.bin';
+      final cursor = await b.sync.journal.get('cursor:${a.repo.deviceId}');
+      await b.sync.synchronize();
+      expect(b.sync.error, isNotNull);
+      expect((await b.repo.overview()).storages, isEmpty);
+      expect(await b.sync.journal.get('cursor:${a.repo.deviceId}'), cursor);
+      disk.failRead = null;
+      await b.sync.synchronize();
+      expect(b.sync.error, isNull);
+      expect((await b.repo.overview()).storages, hasLength(2));
+    },
+  );
+
+  test('Первое создание прервано до meta: ключ и намерение переживают новый сервис', () async {
+    await addStorage(a, 'Первоначальные данные');
+    disk.interruptMeta = true;
+    await a.setup(create: true);
+    expect(a.sync.error, isNotNull);
+    expect(a.sync.enabled, isTrue);
+    expect(disk.files.containsKey('${syncRoot}meta'), isFalse);
+    final reopened = SyncService(
+      a.repo,
+      a.secrets,
+      diskFactory: (_, _) => disk,
+      derive: fastKdf,
+    );
+    addTearDown(reopened.dispose);
+    await reopened.load();
+    await reopened.synchronize();
+    expect(reopened.error, isNull);
+    await b.setup();
+    expect(b.sync.error, isNull);
+    expect(
+      (await b.repo.overview()).storages.single.text('name'),
+      'Первоначальные данные',
+    );
+  });
+
+  test('Ошибочная запись: транзакция откатывает все строки и курсор', () async {
+    await startBoth();
+    final folder = '${syncRoot}log/${a.repo.deviceId}/';
+    final meta = jsonDecode(
+      utf8.decode(disk.files['${syncRoot}meta']!),
+    ) as Map<String, dynamic>;
+    final crypto = await fastKdf(phrase, meta);
+    final liquidity = (await a.repo.query(
+      'SELECT * FROM liquidity_level LIMIT 1',
+    )).single.values;
+    final edited = {
+      ...liquidity,
+      'name': 'НЕ ДОЛЖНО ПРИМЕНИТЬСЯ',
+      'updated_at': a.repo.clock.next(),
+    };
+    final invalid = {...edited, 'id': device(90), 'name': null};
+    final bytes = await crypto.encrypt(
+      utf8.encode(
+        jsonEncode({
+          'format': 1,
+          'dataset': meta['dataset'],
+          'device': a.repo.deviceId,
+          'number': 2,
+          'entries': [
+            {'table': 'liquidity_level', 'row': edited},
+            {'table': 'liquidity_level', 'row': invalid},
+          ],
+        }),
+      ),
+      '${meta['dataset']}|${a.repo.deviceId}|2',
+    );
+    disk.files['${folder}00000000000000000002.bin'] = bytes;
+    final cursor = await b.sync.journal.get('cursor:${a.repo.deviceId}');
+    await b.sync.synchronize();
+    expect(b.sync.error, isNotNull);
+    expect(
+      (await b.repo.query('SELECT name FROM liquidity_level WHERE id=?', [
+        liquidity['id'],
+      ])).single.text('name'),
+      liquidity['name'],
+    );
+    expect(await b.sync.journal.get('cursor:${a.repo.deviceId}'), cursor);
+  });
+
+  test(
+    'Одновременное создание одного курса с разными UUID: LWW составного ключа',
+    () async {
+      await startBoth();
+      final currency = (await a.repo.overview()).currencies
+          .firstWhere((c) => c.text('code') == 'USD')
+          .id;
+      for (final d in [a, b]) {
+        await d.repo.db.customStatement(
+          'INSERT INTO rate_cache(id,updated_at,device_id,deleted,currency_id,date,rate,source) VALUES (?,?,?,?,?,?,?,?)',
+          [
+            device(d == a ? 71 : 72),
+            d.repo.clock.next(),
+            d.repo.deviceId,
+            0,
+            currency,
+            '2026-01-10',
+            d == a ? '2' : '3',
+            'cbr',
+          ],
+        );
+      }
+      final rows = [
+        ...await a.repo.query('SELECT * FROM rate_cache'),
+        ...await b.repo.query('SELECT * FROM rate_cache'),
+      ]..sort((l, r) => l.text('updated_at').compareTo(r.text('updated_at')));
+      final winner = rows.last.text('rate');
+      await a.sync.synchronize();
+      await b.sync.synchronize();
+      await a.sync.synchronize();
+      expect(a.sync.error, isNull);
+      expect(b.sync.error, isNull);
+      for (final d in [a, b]) {
+        expect(
+          (await d.repo.query('SELECT * FROM rate_cache')).single.text('rate'),
+          winner,
+        );
+      }
+    },
+  );
+
+  test(
+    'Сохранение запускает отложенную синхронизацию без ручной кнопки',
+    () async {
+      await a.setup(create: true);
+      expect(a.sync.error, isNull);
+      final count = disk.files.keys.where((p) => p.endsWith('.bin')).length;
+      a.repo.onChanged = a.sync.schedule;
+      await addStorage(a, 'Автоматически');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      expect(a.sync.error, isNull);
+      expect(
+        disk.files.keys.where((p) => p.endsWith('.bin')).length,
+        greaterThan(count),
+      );
+      expect(await a.sync.journal.changes(), isEmpty);
+      a.repo.onChanged = null;
+    },
+  );
+
+  test(
+    'Разные UUID одной новой валюты: безопасный конфликт и исправление кодом',
+    () async {
+      await startBoth();
+      await a.repo.saveCurrency(
+        code: 'CAD',
+        name: 'Выдуманная A',
+        kind: 'fiat',
+        precision: 2,
+      );
+      await a.sync.synchronize();
+      await b.repo.saveCurrency(
+        code: 'CAD',
+        name: 'Выдуманная B',
+        kind: 'fiat',
+        precision: 2,
+      );
+      await b.sync.synchronize();
+      expect(b.sync.error, contains('Конфликт валют'));
+      final bId = (await b.repo.overview()).currencies
+          .firstWhere((c) => c.text('code') == 'CAD')
+          .id;
+      await b.repo.saveCurrency(
+        id: bId,
+        code: 'NZD',
+        name: 'Выдуманная B',
+        kind: 'fiat',
+        precision: 2,
+      );
+      await b.sync.synchronize();
+      expect(b.sync.error, isNull);
+      await a.sync.synchronize();
+      expect(a.sync.error, isNull);
+      for (final d in [a, b]) {
+        expect(
+          (await d.repo.overview()).currencies.where(
+            (c) => ['CAD', 'NZD'].contains(c.text('code')),
+          ),
+          hasLength(2),
+        );
+      }
+    },
+  );
+
+  test('Ограничение WebDAV: никакого другого хоста, каталога, traversal', () {
+    for (final path in [
+      '/Apps/',
+      '/Apps/Finance/../other',
+      '/Apps/Finance/%2e%2e/',
+      '/Apps/Finance/log?token=x',
+      'https://example.invalid/',
+    ]) {
+      expect(() => YandexWebDav.address(path), throwsA(isA<SyncFailure>()));
+    }
+    expect(YandexWebDav.address('/Apps/Finance/meta').host, 'webdav.yandex.ru');
+  });
+}

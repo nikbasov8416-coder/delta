@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../domain/security/device_authenticator.dart';
 import '../providers.dart';
+import '../sync/sync_lifecycle.dart';
 
 class SessionGate extends ConsumerStatefulWidget {
   const SessionGate({required this.child, super.key});
@@ -80,6 +81,7 @@ class _SessionGateState extends ConsumerState<SessionGate>
     _confirmation.clear();
     ref.invalidate(overviewProvider);
     ref.invalidate(snapshotProvider);
+    ref.invalidate(syncServiceProvider);
     ref.invalidate(repositoryProvider);
     _load();
   }
@@ -181,7 +183,10 @@ class _SessionGateState extends ConsumerState<SessionGate>
       return Stack(
         fit: StackFit.expand,
         children: [
-          Offstage(offstage: _hidden, child: widget.child),
+          Offstage(
+            offstage: _hidden,
+            child: SyncLifecycle(child: widget.child),
+          ),
           if (_hidden) const ColoredBox(color: Colors.black),
         ],
       );
