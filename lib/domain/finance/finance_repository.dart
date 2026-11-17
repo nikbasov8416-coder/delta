@@ -1,4 +1,5 @@
 import 'records.dart';
+import '../reports/reports.dart';
 import '../snapshots/snapshot_totals.dart';
 import '../rates/rates.dart';
 
@@ -49,5 +50,6 @@ abstract interface class FinanceRepository {
   Future<void> saveSnapshotHeader(String id, String date, String note);
   Future<void> finalizeSnapshot(String id);
   Future<SnapshotTotals> totals(String id);
+  Future<List<ReportSnapshot>> reportSnapshots();
   Future<void> close();
 }

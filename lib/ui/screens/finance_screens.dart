@@ -1,9 +1,10 @@
 import '../sync/sync_settings.dart';
+import '../money_visibility.dart';
+import '../reports/reports_screen.dart';
 
 import 'dart:io';
 import 'dart:convert';
 
-import 'package:decimal/decimal.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -25,18 +26,6 @@ String friendlyError(Object error) => switch (error) {
   _ =>
     'Не удалось выполнить действие. Проверьте данные; изменения не сохранены.',
 };
-
-String formatMoney(Decimal value, {int precision = 2}) {
-  final parts = value
-      .round(scale: precision)
-      .toStringAsFixed(precision)
-      .split('.');
-  final whole = parts[0].replaceAllMapped(
-    RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-    (m) => '${m[1]} ',
-  );
-  return parts.length == 1 ? whole : '$whole,${parts[1]}';
-}
 
 class EditField {
   const EditField(
@@ -70,7 +59,7 @@ Future<void> editDialog(
   ),
 );
 
-class _EditorDialog extends StatefulWidget {
+class _EditorDialog extends ConsumerStatefulWidget {
   const _EditorDialog({
     required this.title,
     required this.fields,
@@ -84,10 +73,10 @@ class _EditorDialog extends StatefulWidget {
   final Map<String, String> choices;
   final Set<String> selected;
   @override
-  State<_EditorDialog> createState() => _EditorDialogState();
+  ConsumerState<_EditorDialog> createState() => _EditorDialogState();
 }
 
-class _EditorDialogState extends State<_EditorDialog> {
+class _EditorDialogState extends ConsumerState<_EditorDialog> {
   late final Map<String, TextEditingController> controllers;
   late final Set<String> selection;
   bool busy = false;
@@ -118,6 +107,10 @@ class _EditorDialogState extends State<_EditorDialog> {
                     ? TextField(
                         controller: controllers[field.key],
                         enabled: !busy,
+                        obscureText:
+                            field.numeric &&
+                            ['amount', 'family', 'rate'].contains(field.key) &&
+                            amountsHidden(ref),
                         keyboardType: field.numeric
                             ? const TextInputType.numberWithOptions(
                                 decimal: true,
@@ -217,7 +210,10 @@ class FinanceScaffold extends StatelessWidget {
   final Widget child;
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text('Delta · $title')),
+    appBar: AppBar(
+      title: Text('Delta · $title'),
+      actions: const [AmountsEye()],
+    ),
     drawer: Drawer(
       child: SafeArea(
         child: ListView(
@@ -257,11 +253,7 @@ class FinanceScreen extends ConsumerWidget {
               '/catalogs' => _catalogs(context, ref, data),
               '/snapshots' => _snapshots(context, ref, data),
               '/settings' => [const SyncSettings(), const SecuritySettings()],
-              '/reports' => [
-                const Text(
-                  'Графики и сравнение — этап 5. Итоги доступны в каждом слепке.',
-                ),
-              ],
+              '/reports' => [const ReportsView()],
               _ => _home(context, ref, data),
             },
           ),
@@ -303,6 +295,7 @@ class FinanceScreen extends ConsumerWidget {
       label: const Text('Новый слепок'),
     ),
     const SizedBox(height: 16),
+    const MiniReport(),
     if (data.snapshots.isEmpty)
       const Text('Добавьте места хранения, затем создайте первый слепок.'),
     if (data.snapshots.isNotEmpty) ...[
@@ -741,13 +734,13 @@ class SnapshotScreen extends ConsumerWidget {
                 ExpansionTile(
                   title: Text(entry.text('changed_at')),
                   subtitle: Text(_entityLabel(entry.text('entity_type'))),
-                  children: _auditChanges(entry),
+                  children: _auditChanges(entry, amountsHidden(ref)),
                 ),
             ],
           ),
         ),
   );
-  List<Widget> _auditChanges(FinanceRecord entry) {
+  List<Widget> _auditChanges(FinanceRecord entry, bool hidden) {
     final before = jsonDecode(entry.text('old_value')) as Map<String, dynamic>;
     final after = jsonDecode(entry.text('new_value')) as Map<String, dynamic>;
     const labels = {
@@ -769,7 +762,7 @@ class SnapshotScreen extends ConsumerWidget {
       }
       if (key == 'confirmed') return value == 1 ? 'Да' : 'Нет';
       if (['amount', 'family_amount', 'rate'].contains(key)) {
-        return value.toString().replaceAll('.', ',');
+        return hidden ? '•••' : value.toString().replaceAll('.', ',');
       }
       return value.toString();
     }
@@ -817,10 +810,10 @@ class SnapshotScreen extends ConsumerWidget {
                   line.flag('confirmed') ? Icons.check_circle : Icons.edit_note,
                 ),
                 title: Text(
-                  '${line.text('code')}: ${line.values['amount'] == null ? 'не заполнено' : formatMoney(line.decimal('amount'), precision: line.number('precision'))}',
+                  '${line.text('code')}: ${line.values['amount'] == null ? 'не заполнено' : visibleMoney(ref, line.decimal('amount'), precision: line.number('precision'))}',
                 ),
                 subtitle: Text(
-                  'Семейные: ${formatMoney(line.decimal('family_amount'), precision: line.number('precision'))}',
+                  'Семейные: ${visibleMoney(ref, line.decimal('family_amount'), precision: line.number('precision'))}',
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -940,7 +933,7 @@ class SnapshotScreen extends ConsumerWidget {
       subtitle: Text(
         value.isEmpty
             ? 'Введите курс'
-            : '${value.replaceAll('.', ',')} ₽ · ${matches.isEmpty ? 'Постоянный курс' : rateSourceLabel(matches.first.text('source'))}\n${matches.isEmpty ? '' : rateRecordInfo(matches.first)}',
+            : '${amountsHidden(ref) ? '•••' : value.replaceAll('.', ',')} ₽ · ${matches.isEmpty ? 'Постоянный курс' : rateSourceLabel(matches.first.text('source'))}\n${matches.isEmpty ? '' : rateRecordInfo(matches.first)}',
       ),
       trailing: line.text('code') == 'RUB' ? null : const Icon(Icons.edit),
       onTap: line.text('code') == 'RUB'
@@ -1038,7 +1031,7 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
                 Widget line(String label, AmountTotals value) => Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   child: Text(
-                    '$label: ${formatMoney(value.total)} ₽ · семейные ${formatMoney(value.family)} ₽ · личные ${formatMoney(value.personal)} ₽',
+                    '$label: ${visibleMoney(ref, value.total)} ₽ · семейные ${visibleMoney(ref, value.family)} ₽ · личные ${visibleMoney(ref, value.personal)} ₽',
                   ),
                 );
                 return Column(
@@ -1052,7 +1045,7 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
                     if (widget.showCurrencyDetails) ...[
                       for (final quote in state.data!.rates)
                         Text(
-                          '${quote.code}: ${quote.value.toString().replaceAll('.', ',')} ₽ · ${rateSourceLabel(quote.source)}${quote.cached ? ' · кэш' : ''}\nДействует / наблюдение: ${quote.effectiveAt}; получен ${quote.fetchedAt.toLocal()}',
+                          '${quote.code}: ${amountsHidden(ref) ? '•••' : quote.value.toString().replaceAll('.', ',')} ₽ · ${rateSourceLabel(quote.source)}${quote.cached ? ' · кэш' : ''}\nДействует / наблюдение: ${quote.effectiveAt}; получен ${quote.fetchedAt.toLocal()}',
                         ),
                       const Text('По валютам'),
                       for (final entry in totals.byCurrency.entries)
@@ -1060,7 +1053,7 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '${entry.key}: ${formatMoney(entry.value.total, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · семейные ${formatMoney(entry.value.family, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · личные ${formatMoney(entry.value.personal, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))}',
+                              '${entry.key}: ${visibleMoney(ref, entry.value.total, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · семейные ${visibleMoney(ref, entry.value.family, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · личные ${visibleMoney(ref, entry.value.personal, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))}',
                             ),
                             line(
                               'В рублях',
@@ -1084,7 +1077,7 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
                         (l) => l.text('storage_id') == entry.key,
                       ))
                         Text(
-                          '${row.text('code')}: ${formatMoney(row.decimal('amount'), precision: row.number('precision'))}',
+                          '${row.text('code')}: ${visibleMoney(ref, row.decimal('amount'), precision: row.number('precision'))}',
                         ),
                     ],
                     const Divider(),

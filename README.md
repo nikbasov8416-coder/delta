@@ -15,6 +15,7 @@ Windows 10+ x64. Интерфейс на русском, Material 3, светл�
 - [Приватное зеркало GitHub и скачивание APK/Windows ZIP](docs/GITHUB.md).
 - [Курсы, кэш и обоснование резерва](docs/RATES.md).
 - [Подключение устройств, формат и восстановление синхронизации](docs/SYNC.md).
+- [Отчёты, сравнение и скрытие сумм](docs/REPORTS.md).
 - [Постоянная подпись Android](docs/ANDROID_SIGNING.md).
 - [Версии и лицензии всех зависимостей](DEPENDENCIES.md).
 

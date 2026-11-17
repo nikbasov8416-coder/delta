@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../domain/finance/finance_repository.dart';
 import '../domain/finance/records.dart';
+import '../domain/reports/reports.dart';
 import '../domain/money/amount.dart';
 import '../domain/money/currency.dart' as money;
 import '../domain/snapshots/snapshot_totals.dart';
@@ -924,6 +925,53 @@ class DriftFinanceRepository implements FinanceRepository {
       for (final code in codes)
         if (quotes.containsKey(code)) quotes[code]!,
     ]);
+  }
+
+  @override
+  Future<List<ReportSnapshot>> reportSnapshots() async {
+    final result = <ReportSnapshot>[];
+    final headers = await query(
+      "SELECT * FROM snapshot WHERE status='fixed' AND deleted=0 ORDER BY date,created_at,id",
+    );
+    for (final header in headers) {
+      final lines = await query(
+        'SELECT sl.*,s.name AS storage_name,s.liquidity_id AS current_liquidity_id,l.name AS liquidity_name,l.sort_order AS liquidity_order,l.color AS liquidity_color,c.code,c.precision FROM snapshot_line sl JOIN storage s ON s.id=sl.storage_id JOIN liquidity_level l ON l.id=s.liquidity_id JOIN currency c ON c.id=sl.currency_id WHERE sl.snapshot_id=? AND sl.deleted=0 ORDER BY sl.id',
+        [header.id],
+      );
+      final rates = await query(
+        'SELECT sr.*,c.code FROM snapshot_rate sr JOIN currency c ON c.id=sr.currency_id WHERE sr.snapshot_id=? AND sr.deleted=0',
+        [header.id],
+      );
+      for (final row in rates) {
+        if (row.text('code') != 'RUB' &&
+            row.text('rate_date') != header.text('date')) {
+          throw StateError('Дата слепка изменилась. Обновите его курсы.');
+        }
+      }
+      final report = ReportSnapshot(
+        id: header.id,
+        date: header.text('date'),
+        positions: [
+          for (final row in lines)
+            ReportPosition(
+              storageId: row.text('storage_id'),
+              storageName: row.text('storage_name'),
+              currency: row.text('code'),
+              precision: row.number('precision'),
+              liquidityId: row.text('current_liquidity_id'),
+              liquidityName: row.text('liquidity_name'),
+              liquidityOrder: row.number('liquidity_order'),
+              liquidityColor: row.number('liquidity_color'),
+              amount: row.decimal('amount'),
+              family: row.decimal('family_amount'),
+            ),
+        ],
+        rates: {for (final r in rates) r.text('code'): r.decimal('rate')},
+      );
+      report.totals;
+      result.add(report);
+    }
+    return result;
   }
 
   @override

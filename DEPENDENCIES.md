@@ -68,11 +68,13 @@ fl_chart, Argon2id и WebDAV-клиент добавляются
 | decimal | 3.2.6 | основная | [Apache-2.0](https://pub.dev/packages/decimal/versions/3.2.6/license) | `58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd` |
 | drift | 2.35.4 | основная | [MIT](https://pub.dev/packages/drift/versions/2.35.4/license) | `31f84e4edff98f0238a5bef1c2ce754e401fbab149782f0ff4dc9b68fd086f75` |
 | drift_dev | 2.35.3 | разработка | [MIT](https://pub.dev/packages/drift_dev/versions/2.35.3/license) | `31f84e4edff98f0238a5bef1c2ce754e401fbab149782f0ff4dc9b68fd086f75` |
+| equatable | 3.0.0 | транзитивная | [MIT](https://pub.dev/packages/equatable/versions/3.0.0/license) | `07720a43bdabe44206067a2bffd1089dcdc4cc5b0b7f8169308c2f8ba6ad0c86` |
 | fake_async | 1.3.3 | транзитивная | [Apache-2.0](https://pub.dev/packages/fake_async/versions/1.3.3/license) | `58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd` |
 | ffi | 2.2.0 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/ffi/versions/2.2.0/license) | `0371d1da6a57fb791db29d29b95333429205f51f3cb2eb3a0c12d91838a38744` |
 | ffi_leak_tracker | 0.1.2 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/ffi_leak_tracker/versions/0.1.2/license) | `332f290333e64ed007b4f59aeeebd8fd3ceaadfbfa226a6cf2a3ab1583281624` |
 | file | 7.0.1 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/file/versions/7.0.1/license) | `f6df86b1412172537273e8e80ee2fb8a66aa7307ce0b39ea5ddab47ca41b8c49` |
 | fixnum | 1.1.1 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/fixnum/versions/1.1.1/license) | `ff0b91d4f3c32b25cb6ec84985e8da89b0ba2a2b2f7eef353cda5e5423a20390` |
+| fl_chart | 1.3.1 | основная | [MIT](https://pub.dev/packages/fl_chart/versions/1.3.1/license) | `7e49df776ee082bb160c96290e28d7834fd4b5df5d20212d5b3e411bcfe31d96` |
 | flutter | SDK Flutter 3.50.0 | основная | [BSD-3-Clause](https://github.com/flutter/flutter/blob/ab2912035e160d9cad6306df307576da6128ebdb/LICENSE) | `a598db94b6290ffbe10b5ecf911057b6a943351c727fdda9e5f2891d68700a20` |
 | flutter_lints | 6.0.0 | разработка | [BSD-3-Clause](https://pub.dev/packages/flutter_lints/versions/6.0.0/license) | `89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9` |
 | flutter_localizations | SDK Flutter 3.50.0 | основная | [BSD-3-Clause](https://github.com/flutter/flutter/blob/ab2912035e160d9cad6306df307576da6128ebdb/LICENSE) | `a598db94b6290ffbe10b5ecf911057b6a943351c727fdda9e5f2891d68700a20` |

@@ -17,6 +17,7 @@ import '../domain/security/device_authenticator.dart';
 import '../data/security/vault_keys.dart';
 import '../domain/finance/finance_repository.dart';
 import '../domain/finance/records.dart';
+import '../domain/reports/reports.dart';
 import '../domain/security/pin_service.dart';
 
 class SessionAccess extends Notifier<bool> {
@@ -100,6 +101,7 @@ final snapshotProvider = FutureProvider.family<SnapshotDetail, String>(
 
 void refreshFinance(WidgetRef ref, [String? id]) {
   ref.invalidate(overviewProvider);
+  ref.invalidate(reportSnapshotsProvider);
   if (id != null) ref.invalidate(snapshotProvider(id));
 }
 
@@ -121,6 +123,7 @@ final syncServiceProvider = FutureProvider.autoDispose<SyncService?>((
       previous = service.lastSync;
       ref.invalidate(overviewProvider);
       ref.invalidate(snapshotProvider);
+      ref.invalidate(reportSnapshotsProvider);
     }
   }
 
@@ -139,3 +142,7 @@ final syncServiceProvider = FutureProvider.autoDispose<SyncService?>((
   if (!disposed) service.schedule();
   return service;
 });
+
+final reportSnapshotsProvider = FutureProvider<List<ReportSnapshot>>(
+  (ref) async => (await ref.watch(repositoryProvider.future)).reportSnapshots(),
+);
