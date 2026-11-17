@@ -46,6 +46,7 @@ class TestDevice {
       secrets,
       diskFactory: (_) => disk,
       derive: fastKdf,
+      initialFormat: 1,
     );
     return TestDevice(repo, secrets, sync);
   }
@@ -344,6 +345,7 @@ void main() {
         a.secrets,
         diskFactory: (_) => disk,
         derive: fastKdf,
+        initialFormat: 1,
       );
       addTearDown(retry.dispose);
       await retry.load();
@@ -396,6 +398,7 @@ void main() {
       a.secrets,
       diskFactory: (_) => disk,
       derive: fastKdf,
+      initialFormat: 1,
     );
     addTearDown(reopened.dispose);
     await reopened.load();
@@ -494,24 +497,18 @@ void main() {
     },
   );
 
-  test(
-    'Сохранение запускает отложенную синхронизацию без ручной кнопки',
-    () async {
-      await a.setup(create: true);
-      expect(a.sync.error, isNull);
-      final count = disk.files.keys.where((p) => p.endsWith('.bin')).length;
-      a.repo.onChanged = a.sync.schedule;
-      await addStorage(a, 'Автоматически');
-      await Future<void>.delayed(const Duration(milliseconds: 800));
-      expect(a.sync.error, isNull);
-      expect(
-        disk.files.keys.where((p) => p.endsWith('.bin')).length,
-        greaterThan(count),
-      );
-      expect(await a.sync.journal.changes(), isEmpty);
-      a.repo.onChanged = null;
-    },
-  );
+  test('Сохранение накапливает очередь без обмена', () async {
+    await a.setup(create: true);
+    expect(a.sync.error, isNull);
+    final count = disk.files.keys.where((p) => p.endsWith('.bin')).length;
+    a.repo.onChanged = a.sync.changed;
+    await addStorage(a, 'Автоматически');
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    expect(a.sync.error, isNull);
+    expect(disk.files.keys.where((p) => p.endsWith('.bin')).length, count);
+    expect(await a.sync.journal.changes(), isNotEmpty);
+    a.repo.onChanged = null;
+  });
 
   test(
     'Разные UUID одной новой валюты: безопасный конфликт и исправление кодом',

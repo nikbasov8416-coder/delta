@@ -25,6 +25,8 @@ class DriftFinanceRepository implements FinanceRepository {
        now = now ?? DateTime.now;
   final AppDatabase db;
   void Function()? onChanged;
+  void Function()? onFinalized;
+  Future<void> Function()? beforeClose;
   final String deviceId;
   final HybridClock clock;
   final RateGateway? gateway;
@@ -614,30 +616,33 @@ class DriftFinanceRepository implements FinanceRepository {
       });
 
   @override
-  Future<void> finalizeSnapshot(String id) => db.transaction(() async {
-    final detail = await snapshot(id);
-    if (detail.header.text('status') != 'draft') {
-      throw StateError('Слепок уже зафиксирован');
-    }
-    if (detail.lines.isEmpty ||
-        detail.lines.any(
-          (l) => !l.flag('confirmed') || l.values['amount'] == null,
-        )) {
-      throw StateError('Подтвердите суммы во всех строках');
-    }
-    for (final line in detail.lines) {
-      if (line.text('code') == 'RUB' &&
-          !detail.rates.any(
-            (r) => r.text('currency_id') == line.text('currency_id'),
-          )) {
-        await saveRate(id, line.text('currency_id'), '1');
+  Future<void> finalizeSnapshot(String id) async {
+    await db.transaction(() async {
+      final detail = await snapshot(id);
+      if (detail.header.text('status') != 'draft') {
+        throw StateError('Слепок уже зафиксирован');
       }
-    }
-    await totals(
-      id,
-    ); // Отсутствие любого курса не позволяет зафиксировать слепок.
-    await _update('snapshot', id, {'status': 'fixed'});
-  });
+      if (detail.lines.isEmpty ||
+          detail.lines.any(
+            (l) => !l.flag('confirmed') || l.values['amount'] == null,
+          )) {
+        throw StateError('Подтвердите суммы во всех строках');
+      }
+      for (final line in detail.lines) {
+        if (line.text('code') == 'RUB' &&
+            !detail.rates.any(
+              (r) => r.text('currency_id') == line.text('currency_id'),
+            )) {
+          await saveRate(id, line.text('currency_id'), '1');
+        }
+      }
+      await totals(
+        id,
+      ); // Отсутствие любого курса не позволяет зафиксировать слепок.
+      await _update('snapshot', id, {'status': 'fixed'});
+    });
+    onFinalized?.call();
+  }
 
   @override
   Future<SnapshotTotals> totals(String id) async =>
@@ -922,5 +927,8 @@ class DriftFinanceRepository implements FinanceRepository {
   }
 
   @override
-  Future<void> close() => db.close();
+  Future<void> close() async {
+    await beforeClose?.call();
+    await db.close();
+  }
 }

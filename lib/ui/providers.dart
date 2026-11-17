@@ -54,10 +54,15 @@ final repositoryProvider = FutureProvider<FinanceRepository>((ref) async {
   final keys = VaultKeys(store);
   final gateway = ref.watch(rateGatewayProvider);
   AppDatabase? database;
+  DriftFinanceRepository? openedRepository;
   var disposed = false;
   ref.onDispose(() {
     disposed = true;
-    database?.close();
+    if (openedRepository != null) {
+      openedRepository.close();
+    } else {
+      database?.close();
+    }
   });
   final directory = await getApplicationSupportDirectory();
   await directory.create(recursive: true);
@@ -75,6 +80,7 @@ final repositoryProvider = FutureProvider<FinanceRepository>((ref) async {
     deviceId,
     gateway: gateway,
   );
+  openedRepository = repository;
   try {
     await repository.initialize();
     if (disposed) throw StateError('Сессия закрыта');
@@ -121,11 +127,14 @@ final syncServiceProvider = FutureProvider.autoDispose<SyncService?>((
   ref.onDispose(() {
     disposed = true;
     repository.onChanged = null;
+    repository.onFinalized = null;
     service.removeListener(updated);
-    service.dispose();
+    service.release();
   });
   service.addListener(updated);
-  repository.onChanged = service.schedule;
+  repository.onChanged = service.changed;
+  repository.onFinalized = service.schedule;
+  repository.beforeClose = service.release;
   await service.load();
   if (!disposed) service.schedule();
   return service;

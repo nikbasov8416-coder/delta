@@ -13,5 +13,11 @@ abstract interface class SyncDisk {
   Future<Uint8List?> read(String path);
   Future<List<String>> list(String path);
   Future<void> publish(String path, Uint8List bytes);
+
+  /// Атомарная замена служебного указателя/маркера, готовые пачки не заменяет.
+  Future<void> replace(String path, Uint8List bytes);
+
+  /// Идемпотентное окончательное удаление только внутри syncRoot.
+  Future<void> delete(String path);
   void close();
 }

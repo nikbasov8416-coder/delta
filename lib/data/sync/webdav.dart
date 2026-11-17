@@ -161,12 +161,17 @@ class YandexWebDav implements SyncDisk {
   }
 
   @override
-  Future<void> publish(String path, Uint8List bytes) async {
+  Future<void> publish(String path, Uint8List bytes) =>
+      _publish(path, bytes, false);
+  @override
+  Future<void> replace(String path, Uint8List bytes) =>
+      _publish(path, bytes, true);
+  Future<void> _publish(String path, Uint8List bytes, bool overwrite) async {
     address(path);
     if (bytes.length > syncMaximumBytes) {
       throw const SyncFailure('Пачка синхронизации слишком большая.');
     }
-    final existing = await read(path);
+    final existing = overwrite ? null : await read(path);
     if (existing != null) {
       if (base64Encode(existing) != base64Encode(bytes)) {
         throw const SyncFailure(
@@ -182,13 +187,26 @@ class YandexWebDav implements SyncDisk {
     final move = await _request(
       'MOVE',
       temp,
-      headers: {'Destination': address(path).toString(), 'Overwrite': 'F'},
+      headers: {
+        'Destination': address(path).toString(),
+        'Overwrite': overwrite ? 'T' : 'F',
+      },
     );
     if (move.$1 == 412) {
       final winner = await read(path);
       if (winner != null && base64Encode(winner) == base64Encode(bytes)) return;
     }
     _status(move.$1, {201, 204});
+  }
+
+  @override
+  Future<void> delete(String path) async {
+    address(path);
+    if (path == syncRoot) {
+      throw const SyncFailure('Удаление корня синхронизации запрещено.');
+    }
+    final result = await _request('DELETE', path);
+    _status(result.$1, {200, 204, 404});
   }
 
   @override

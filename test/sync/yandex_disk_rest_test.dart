@@ -648,4 +648,36 @@ void main() {
     );
     expect(empty.requests, isEmpty);
   });
+  test(
+    'delete: только внутри корня, permanently=true, 202 опрашивается',
+    () async {
+      final client = _Client()
+        ..replies.addAll([
+          _Response(202, json: {'href': operation}),
+          _Response(200, json: {'status': 'success'}),
+        ]);
+      final disk = YandexDiskRest(syntheticToken, client: client);
+      await disk.delete('${syncRoot}sets/old/');
+      expect(client.requests.first.method, 'DELETE');
+      expect(client.requests.first.uri.queryParameters, {
+        'path': 'app:/sets/old',
+        'permanently': 'true',
+      });
+      final count = client.requests.length;
+      for (final bad in ['/Apps/', '$syncRoot../x', syncRoot]) {
+        await expectLater(disk.delete(bad), throwsA(isA<SyncFailure>()));
+      }
+      expect(client.requests.length, count);
+    },
+  );
+  test('replace: указатель меняется атомарным MOVE с overwrite=true', () async {
+    final client = _Client()
+      ..replies.addAll([_link(upload), _Response(201), _Response(201)]);
+    await YandexDiskRest(
+      syntheticToken,
+      client: client,
+    ).replace('${syncRoot}current', Uint8List.fromList([1]));
+    expect(client.requests.map((r) => r.method), ['GET', 'PUT', 'POST']);
+    expect(client.requests.last.uri.queryParameters['overwrite'], 'true');
+  });
 }

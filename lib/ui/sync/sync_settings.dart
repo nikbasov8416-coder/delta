@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import 'yandex_oauth.dart';
+import 'sync_help.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -34,6 +35,8 @@ class SyncSettings extends ConsumerWidget {
                     Text(
                       'Последняя синхронизация: ${service.lastSync?.toLocal().toString().split('.').first ?? 'ещё не выполнялась'}',
                     ),
+                    if (service.hasPendingChanges)
+                      const Text('Есть неотправленные изменения'),
                     if (service.busy) const LinearProgressIndicator(),
                     if (service.error != null) Text(service.error!),
                     if (service.enabled)
@@ -58,12 +61,148 @@ class SyncSettings extends ConsumerWidget {
                         ),
                       ],
                     ),
+                    if (service.enabled)
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: service.busy
+                                ? null
+                                : () => _maintenance(context, service, false),
+                            child: const Text('Обновить вход в Яндекс'),
+                          ),
+                          TextButton(
+                            onPressed: service.busy
+                                ? null
+                                : service.phraseChangePending
+                                ? service.synchronize
+                                : () => _maintenance(context, service, true),
+                            child: Text(
+                              service.phraseChangePending
+                                  ? 'Продолжить смену фразы'
+                                  : 'Сменить парольную фразу',
+                            ),
+                          ),
+                        ],
+                      ),
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SyncHelp(),
+                        ),
+                      ),
+                      child: const Text('Редкие ситуации'),
+                    ),
                     const Text(syncLossWarning),
                     const Divider(),
                   ],
                 ),
               ),
       );
+  Future<void> _maintenance(
+    BuildContext context,
+    SyncService service,
+    bool phrase,
+  ) async {
+    final first = TextEditingController(), second = TextEditingController();
+    bool accepted = false, working = false;
+    String? error;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialog) => StatefulBuilder(
+        builder: (context, setState) => PopScope(
+          canPop: !working,
+          child: AlertDialog(
+            title: Text(
+              phrase ? 'Сменить парольную фразу' : 'Обновить вход в Яндекс',
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (phrase)
+                    const Text(
+                      'Сначала синхронизируйте остальные устройства, их неотправленные изменения иначе потеряются. После смены подключите их заново с новой фразой. Дождитесь завершения; при обрыве смена продолжится после следующего входа.',
+                    ),
+                  if (!phrase)
+                    SelectableText(yandexAuthorizationUri.toString()),
+                  TextField(
+                    controller: first,
+                    obscureText: true,
+                    enabled: !working,
+                    decoration: InputDecoration(
+                      labelText: phrase
+                          ? 'Новая фраза (от 12 символов)'
+                          : 'Новый OAuth-токен',
+                    ),
+                  ),
+                  if (phrase)
+                    TextField(
+                      controller: second,
+                      obscureText: true,
+                      enabled: !working,
+                      decoration: const InputDecoration(
+                        labelText: 'Повторите новую фразу',
+                      ),
+                    ),
+                  if (phrase)
+                    CheckboxListTile(
+                      value: accepted,
+                      onChanged: working
+                          ? null
+                          : (v) => setState(() => accepted = v ?? false),
+                      title: const Text(
+                        'Фраза сохранена; остальные устройства синхронизированы',
+                      ),
+                    ),
+                  if (error != null) Text(error!),
+                  if (working) const LinearProgressIndicator(),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: working ? null : () => Navigator.pop(dialog),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: working || phrase && !accepted
+                    ? null
+                    : () async {
+                        if (phrase && first.text != second.text) {
+                          setState(() => error = 'Фразы не совпадают.');
+                          return;
+                        }
+                        setState(() => working = true);
+                        try {
+                          if (phrase) {
+                            await service.changePhrase(first.text);
+                          } else {
+                            await service.refreshToken(first.text);
+                          }
+                          if (!dialog.mounted) return;
+                          if (service.error == null) {
+                            Navigator.pop(dialog);
+                          } else {
+                            setState(() => error = service.error);
+                          }
+                        } finally {
+                          if (dialog.mounted) setState(() => working = false);
+                        }
+                      },
+                child: const Text('Продолжить'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    first.dispose();
+    second.dispose();
+  }
+
   Future<void> _open(
     BuildContext context,
     SyncService service,

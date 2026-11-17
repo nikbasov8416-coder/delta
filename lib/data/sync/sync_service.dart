@@ -10,6 +10,7 @@ import 'sync_crypto.dart';
 import 'sync_error.dart';
 import 'sync_journal.dart';
 import 'sync_storage.dart';
+part 'sync_rotation.dart';
 
 typedef DiskFactory = SyncDisk Function(String token);
 typedef CryptoDeriver = Future<SyncCrypto> Function(
@@ -28,12 +29,18 @@ class SyncService extends ChangeNotifier {
     this.secrets, {
     required this.diskFactory,
     CryptoDeriver? derive,
+    this.initialFormat = 2,
   }) : derive = derive ?? SyncCrypto.derive,
        journal = SyncJournal(repository.db, repository.clock);
   final DriftFinanceRepository repository;
   final SecretStore secrets;
   final DiskFactory diskFactory;
   final CryptoDeriver derive;
+  final int initialFormat;
+  Map<String, dynamic> _credentials = {};
+  String _base = syncRoot;
+  bool hasPendingChanges = false;
+  Future<void>? _release;
   final SyncJournal journal;
   SyncDisk? _disk;
   SyncCrypto? _crypto;
@@ -45,10 +52,95 @@ class SyncService extends ChangeNotifier {
   void schedule() {
     if (_closed || !enabled) return;
     _timer?.cancel();
-    // onChanged вызывается внутри drift-транзакции. Таймер не должен
-    // унаследовать её Zone и затем использовать уже закрытый executor.
-    _timer = _zone.run(
-      () => Timer(const Duration(milliseconds: 500), synchronize),
+    _timer = _zone.run(() => Timer(Duration.zero, synchronize));
+  }
+
+  void changed() {
+    if (_closed) return;
+    _zone.run(() => unawaited(refreshPending()));
+  }
+
+  Future<bool> refreshPending() async {
+    if (_closed) return false;
+    hasPendingChanges =
+        (await journal.changes()).isNotEmpty ||
+        (await journal.get('pending') ?? '').isNotEmpty;
+    _notify();
+    return hasPendingChanges;
+  }
+
+  Future<void> sendPending() async {
+    if (busy) {
+      await _flight;
+      return;
+    }
+    if (await refreshPending()) await synchronize(uploadOnly: true);
+  }
+
+  Future<void> release({Duration timeout = const Duration(seconds: 15)}) {
+    if (_closed) return SynchronousFuture<void>(null);
+    if (_release != null) return _release!;
+    final flight = _flight;
+    if (flight == null) {
+      dispose();
+      return _release = SynchronousFuture<void>(null);
+    }
+    return _release = flight
+        .timeout(timeout)
+        .then<void>((_) {}, onError: (Object _, StackTrace _) {})
+        .whenComplete(dispose);
+  }
+
+  static String _layout(Map<String, dynamic> meta) =>
+      meta['format'] == 1 ? syncRoot : '${syncRoot}sets/${meta['dataset']}/';
+  Future<({String base, Map<String, dynamic> meta})?> _active(
+    SyncDisk disk,
+  ) async {
+    final pointer = await disk.read('${syncRoot}current');
+    var base = syncRoot;
+    if (pointer != null) {
+      try {
+        final json = jsonDecode(utf8.decode(pointer)) as Map;
+        if (json['format'] != 2 ||
+            !RegExp(r'^[a-f0-9-]{36}$').hasMatch(json['dataset'] as String)) {
+          throw const FormatException();
+        }
+        base = '${syncRoot}sets/${json['dataset']}/';
+      } catch (_) {
+        throw const SyncFailure(
+          'Данные пришли с другой версии Delta. Обновите приложение на этом устройстве',
+        );
+      }
+    }
+    final bytes = await disk.read('${base}meta');
+    if (bytes == null) {
+      if (pointer != null) {
+        throw const SyncFailure(
+          'Текущий набор синхронизации недоступен. Повторите позже.',
+        );
+      }
+      return null;
+    }
+    final meta = _decodeMeta(bytes);
+    if (pointer != null && _layout(meta) != base) {
+      throw const SyncFailure('Повреждён указатель синхронизации.');
+    }
+    return (base: base, meta: meta);
+  }
+
+  Future<void> _pointCurrent(SyncDisk disk, Map<String, dynamic> meta) async {
+    await disk.replace(
+      '${syncRoot}current',
+      Uint8List.fromList(
+        utf8.encode(jsonEncode({'format': 2, 'dataset': meta['dataset']})),
+      ),
+    );
+    // Старые выпуски останавливаются до чтения/записи прежнего журнала.
+    await disk.replace(
+      '${syncRoot}meta',
+      Uint8List.fromList(
+        utf8.encode(jsonEncode({'format': 2, 'layout': 'sets'})),
+      ),
     );
   }
 
@@ -56,6 +148,7 @@ class SyncService extends ChangeNotifier {
   DateTime? lastSync;
   bool get enabled => _disk != null;
   bool get busy => _flight != null;
+  bool get phraseChangePending => _credentials['rotation'] != null;
   String get _device => repository.deviceId;
   String get _dataset => _meta!['dataset'] as String;
   static const credentialsKey = 'sync_credentials_v1';
@@ -79,6 +172,7 @@ class SyncService extends ChangeNotifier {
       lastSync = DateTime.tryParse(await journal.get('last_sync') ?? '');
       if (saved == null || saved.isEmpty) return;
       final config = jsonDecode(saved) as Map<String, dynamic>;
+      _credentials = config;
       if (config['provider'] != 'yandex-rest-v1') {
         lastSync = null;
         return; // Старые login/password не являются настройкой REST/OAuth.
@@ -93,6 +187,8 @@ class SyncService extends ChangeNotifier {
       _meta = meta;
       _crypto = crypto;
       _disk = diskFactory(config['token'] as String);
+      _base = _layout(meta);
+      await refreshPending();
     } catch (_) {
       error =
           'Не удалось открыть настройку синхронизации. Подключитесь заново.';
@@ -137,9 +233,12 @@ class SyncService extends ChangeNotifier {
     try {
       if (create) {
         await disk.mkdir(syncRoot);
-        await disk.mkdir('${syncRoot}log/');
+        if (initialFormat == 1) await disk.mkdir('${syncRoot}log/');
       }
-      final bytes = await disk.read('${syncRoot}meta');
+      final active = await _active(disk);
+      final bytes = active == null
+          ? null
+          : Uint8List.fromList(utf8.encode(jsonEncode(active.meta)));
       Map<String, dynamic> meta;
       SyncCrypto crypto;
       if (create) {
@@ -148,7 +247,7 @@ class SyncService extends ChangeNotifier {
             'Синхронизация уже создана. Выберите «Подключиться».',
           );
         }
-        meta = SyncCrypto.header();
+        meta = SyncCrypto.header(format: initialFormat);
         crypto = await derive(phrase, meta);
         meta['check'] = base64Encode(
           await crypto.encrypt(
@@ -213,19 +312,18 @@ class SyncService extends ChangeNotifier {
         await journal.set('initializing', create ? '1' : '0');
         await journal.set('applying', '0');
       });
-      await secrets.write(
-        credentialsKey,
-        jsonEncode({
-          'provider': 'yandex-rest-v1',
-          'token': token.trim(),
-          'meta': meta,
-          'key': base64Encode(await crypto.key.extractBytes()),
-        }),
-      );
+      _credentials = {
+        'provider': 'yandex-rest-v1',
+        'token': token.trim(),
+        'meta': meta,
+        'key': base64Encode(await crypto.key.extractBytes()),
+      };
+      await secrets.write(credentialsKey, jsonEncode(_credentials));
       _disk?.close();
       _disk = disk;
       _meta = meta;
       _crypto = crypto;
+      _base = _layout(meta);
       installed = true;
       lastSync = null;
       do {
@@ -256,13 +354,14 @@ class SyncService extends ChangeNotifier {
     bool fresh = false,
   }) async {
     final result = _Remote();
-    final devices = await disk.list('${syncRoot}log/');
+    final base = _layout(meta);
+    final devices = await disk.list('${base}log/');
     for (final device in devices) {
       if (!RegExp(r'^[a-f0-9-]{36}$').hasMatch(device)) continue;
       var cursor = fresh
           ? 0
           : int.parse(await journal.get('cursor:$device') ?? '0');
-      final folder = '${syncRoot}log/$device/';
+      final folder = '${base}log/$device/';
       final names = (await disk.list(
         folder,
       )).where((s) => RegExp(r'^\d{20}\.bin$').hasMatch(s)).toList()..sort();
@@ -286,7 +385,7 @@ class SyncService extends ChangeNotifier {
         );
         try {
           final batch = jsonDecode(utf8.decode(clear)) as Map<String, dynamic>;
-          if (batch['format'] != 1 ||
+          if (batch['format'] != meta['format'] ||
               batch['dataset'] != meta['dataset'] ||
               batch['device'] != device ||
               batch['number'] != number) {
@@ -307,7 +406,7 @@ class SyncService extends ChangeNotifier {
     return result;
   }
 
-  Future<void> synchronize() {
+  Future<void> synchronize({bool uploadOnly = false}) {
     if (_closed || !enabled) return Future.value();
     if (_flight != null) {
       _again = true;
@@ -316,7 +415,11 @@ class SyncService extends ChangeNotifier {
     final future = _guard(() async {
       do {
         _again = false;
-        await _sync();
+        if (_credentials['rotation'] != null) {
+          await _resumeRotation();
+        } else {
+          await _sync(uploadOnly: uploadOnly);
+        }
       } while (_again && !_closed);
     });
     _flight = future.whenComplete(() {
@@ -340,22 +443,39 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  Future<void> _sync() async {
+  Future<void> _sync({bool uploadOnly = false}) async {
     _alive();
     final disk = _disk!, crypto = _crypto!;
-    var bytes = await disk.read('${syncRoot}meta');
-    if (bytes == null && await journal.get('initializing') == '1') {
-      bytes = Uint8List.fromList(utf8.encode(jsonEncode(_meta)));
-      await disk.publish('${syncRoot}meta', bytes);
+    final initializing = await journal.get('initializing') == '1';
+    final active = await _active(disk);
+    if (active != null && active.meta['dataset'] != _dataset) {
+      if (active.meta['format'] == 2) {
+        throw const SyncFailure(
+          'Синхронизация на Диске пересоздана. Подключитесь с новой парольной фразой',
+        );
+      }
+      throw const SyncFailure(
+        'На Диске другая синхронизация. Подключитесь заново.',
+      );
     }
-    if (bytes == null) {
+    if (initializing) {
+      if (_meta!['format'] == 2) {
+        await disk.mkdir('${syncRoot}sets/');
+        await disk.mkdir(_base);
+      }
+      await disk.mkdir('${_base}log/');
+      await disk.publish(
+        '${_base}meta',
+        Uint8List.fromList(utf8.encode(jsonEncode(_meta))),
+      );
+    } else if (active == null) {
       throw const SyncFailure(
         'Папка синхронизации недоступна. Данные не отправлены.',
       );
     }
-    final remoteMeta = _decodeMeta(bytes);
-    if (SyncCrypto.checkAad(remoteMeta) != SyncCrypto.checkAad(_meta!) ||
-        remoteMeta['check'] != _meta!['check']) {
+    if (active != null &&
+        (SyncCrypto.checkAad(active.meta) != SyncCrypto.checkAad(_meta!) ||
+            active.meta['check'] != _meta!['check'])) {
       throw const SyncFailure(
         'На Диске другая синхронизация. Подключитесь заново.',
       );
@@ -365,18 +485,20 @@ class SyncService extends ChangeNotifier {
         'Локальная настройка синхронизации не совпала. Подключитесь заново.',
       );
     }
-    final remote = await _download(disk, crypto, _meta!);
-    _alive();
-    await repository.db.transaction(() async {
-      await repository.db.customStatement('PRAGMA defer_foreign_keys=ON');
-      await journal.set('applying', '1');
-      await journal.apply(remote.entries);
-      for (final entry in remote.cursors.entries) {
-        await journal.set('cursor:${entry.key}', '${entry.value}');
-      }
-      await journal.set('applying', '0');
-    });
-    final folder = '${syncRoot}log/$_device/';
+    if (!uploadOnly) {
+      final remote = await _download(disk, crypto, _meta!);
+      _alive();
+      await repository.db.transaction(() async {
+        await repository.db.customStatement('PRAGMA defer_foreign_keys=ON');
+        await journal.set('applying', '1');
+        await journal.apply(remote.entries);
+        for (final entry in remote.cursors.entries) {
+          await journal.set('cursor:${entry.key}', '${entry.value}');
+        }
+        await journal.set('applying', '0');
+      });
+    }
+    final folder = '${_base}log/$_device/';
     await disk.mkdir(folder);
     while (!_closed) {
       var pending = await journal.get('pending');
@@ -386,7 +508,7 @@ class SyncService extends ChangeNotifier {
         final number = int.parse(await journal.get('next_batch') ?? '1');
         final clear = utf8.encode(
           jsonEncode({
-            'format': 1,
+            'format': _meta!['format'],
             'dataset': _dataset,
             'device': _device,
             'number': number,
@@ -429,13 +551,18 @@ class SyncService extends ChangeNotifier {
       });
     }
     _alive();
+    if (initializing && _meta!['format'] == 2) {
+      await _pointCurrent(disk, _meta!);
+    }
     await journal.set('initializing', '0');
+    await refreshPending();
     lastSync = DateTime.now().toUtc();
     await journal.set('last_sync', lastSync!.toIso8601String());
   }
 
   @override
   void dispose() {
+    if (_closed) return;
     _closed = true;
     _timer?.cancel();
     _disk?.close();

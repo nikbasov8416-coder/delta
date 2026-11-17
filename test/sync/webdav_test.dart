@@ -205,4 +205,14 @@ void main() {
       ),
     );
   });
+  test('delete WebDAV ограничен корнем', () async {
+    final client = _Client()..replies.add(_Response(204));
+    final disk = YandexWebDav('synthetic', 'synthetic-secret', client: client);
+    await disk.delete('/Apps/Finance/log/old/');
+    expect(client.requests.single.method, 'DELETE');
+    for (final path in ['/Apps/', '/Apps/Finance/../x', '/Apps/Finance/']) {
+      await expectLater(disk.delete(path), throwsA(isA<SyncFailure>()));
+    }
+    expect(client.requests, hasLength(1));
+  });
 }

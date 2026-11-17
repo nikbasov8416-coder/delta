@@ -358,12 +358,19 @@ class YandexDiskRest implements SyncDisk {
   }
 
   @override
-  Future<void> publish(String path, Uint8List bytes) async {
+  Future<void> publish(String path, Uint8List bytes) =>
+      _publish(path, bytes, false);
+
+  @override
+  Future<void> replace(String path, Uint8List bytes) =>
+      _publish(path, bytes, true);
+
+  Future<void> _publish(String path, Uint8List bytes, bool overwrite) async {
     final resource = resourcePath(path);
     if (bytes.length > syncMaximumBytes) {
       throw const SyncFailure('Пачка синхронизации слишком большая.');
     }
-    if (await _existing(path, bytes)) return;
+    if (!overwrite && await _existing(path, bytes)) return;
     // Два устройства могут одновременно создавать meta. Разные временные
     // имена не позволяют MOVE одного устройства опубликовать чужие байты.
     final temp = resourcePath('$path.${const Uuid().v4()}.part');
@@ -383,20 +390,37 @@ class YandexDiskRest implements SyncDisk {
       _api('resources/move', {
         'from': temp,
         'path': resource,
-        'overwrite': 'false',
+        'overwrite': '$overwrite',
       }),
     );
-    if (move.$1 == 409 && await _existing(path, bytes)) return;
+    if (!overwrite && move.$1 == 409 && await _existing(path, bytes)) return;
     if (move.$1 == 202) {
       try {
         await _operation(move);
       } on _OperationFailed {
-        if (await _existing(path, bytes)) return;
+        if (!overwrite && await _existing(path, bytes)) return;
         rethrow;
       }
     } else {
       _status(move.$1, {201});
     }
+  }
+
+  @override
+  Future<void> delete(String path) async {
+    final resource = resourcePath(path);
+    if (resource == 'app:/') {
+      throw const SyncFailure('Удаление корня синхронизации запрещено.');
+    }
+    final result = await _request(
+      'DELETE',
+      _api('resources', {'path': resource, 'permanently': 'true'}),
+    );
+    if (result.$1 == 202) {
+      await _operation(result);
+      return;
+    }
+    _status(result.$1, {204, 404});
   }
 
   @override

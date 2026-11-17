@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:delta/data/sync/sync_storage.dart';
 import 'package:delta/data/sync/sync_error.dart';
@@ -10,6 +11,7 @@ class FakeDisk implements SyncDisk {
   final publications = <String, List<Uint8List>>{};
   bool interruptUpload = false, loseAck = false, interruptMeta = false;
   String? failRead;
+  Completer<void>? pauseRead;
   @override
   Future<void> mkdir(String path) async {
     if (!path.startsWith(syncRoot)) {
@@ -20,6 +22,7 @@ class FakeDisk implements SyncDisk {
 
   @override
   Future<Uint8List?> read(String path) async {
+    await pauseRead?.future;
     if (!path.startsWith(syncRoot)) {
       throw const SyncFailure('Путь вне приложения.');
     }
@@ -69,6 +72,38 @@ class FakeDisk implements SyncDisk {
       loseAck = false;
       throw const SyncFailure('Ответ потерян.');
     }
+  }
+
+  String? failReplace;
+  String? failDelete;
+  bool loseReplaceAck = false;
+  final deleted = <String>[];
+  @override
+  Future<void> replace(String path, Uint8List bytes) async {
+    if (!path.startsWith(syncRoot)) {
+      throw const SyncFailure('Путь вне приложения.');
+    }
+    if (path == failReplace) throw const SyncFailure('Обрыв переключения.');
+    files[path] = Uint8List.fromList(bytes);
+    if (loseReplaceAck) {
+      loseReplaceAck = false;
+      throw const SyncFailure('Ответ переключения потерян.');
+    }
+  }
+
+  @override
+  Future<void> delete(String path) async {
+    if (!path.startsWith(syncRoot) || path == syncRoot) {
+      throw const SyncFailure('Путь вне приложения.');
+    }
+    if (path == failDelete) throw const SyncFailure('Обрыв удаления.');
+    deleted.add(path);
+    files.removeWhere(
+      (key, _) => key == path || path.endsWith('/') && key.startsWith(path),
+    );
+    folders.removeWhere(
+      (key) => key == path || path.endsWith('/') && key.startsWith(path),
+    );
   }
 
   @override

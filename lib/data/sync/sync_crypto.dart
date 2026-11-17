@@ -15,8 +15,8 @@ class SyncCrypto {
   static const memory = 19456, iterations = 2, parallelism = 1;
   static const checkText = 'Delta sync key check v1';
 
-  static Map<String, dynamic> header() => {
-    'format': 1,
+  static Map<String, dynamic> header({int format = 1}) => {
+    'format': format,
     'dataset': const Uuid().v4(),
     'cipher': 'aes-256-gcm',
     'kdf': 'argon2id-v19',
@@ -29,7 +29,7 @@ class SyncCrypto {
   };
   static void validate(Map<String, dynamic> meta) {
     try {
-      if (meta['format'] != 1 ||
+      if (![1, 2].contains(meta['format']) ||
           meta['cipher'] != 'aes-256-gcm' ||
           meta['kdf'] != 'argon2id-v19' ||
           meta['memory'] != memory ||
