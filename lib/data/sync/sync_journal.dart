@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 
 import '../database/app_database.dart';
+import '../default_catalog.dart';
 import '../../domain/sync/hlc.dart';
 import 'sync_error.dart';
 
@@ -48,8 +49,10 @@ class SyncJournal {
           .toList();
       final json = columns.map((c) => "'$c',NEW.$c").join(',');
       for (final operation in ['INSERT', 'UPDATE']) {
+        final name = 'sync_${table}_${operation.toLowerCase()}';
+        await db.customStatement('DROP TRIGGER IF EXISTS $name');
         await db.customStatement(
-          'CREATE TRIGGER IF NOT EXISTS sync_${table}_${operation.toLowerCase()} AFTER $operation ON $table '
+          'CREATE TRIGGER $name AFTER $operation ON $table '
           "WHEN NOT EXISTS(SELECT 1 FROM sync_local WHERE key='applying' AND value='1') "
           "BEGIN INSERT INTO sync_outbox(entity,payload) VALUES ('$table',json_object($json)); END",
         );
@@ -91,13 +94,29 @@ class SyncJournal {
     'INSERT OR REPLACE INTO sync_local VALUES (?,?)',
     [key, value],
   );
-  Future<bool> hasData() async =>
-      (await db
-              .customSelect(
-                '${syncTables.map((table) => 'SELECT 1 FROM $table').join(' UNION ALL ')} LIMIT 1',
-              )
-              .get())
-          .isNotEmpty;
+  Future<bool> hasData() async {
+    if ((await db
+            .customSelect(
+              'SELECT 1 FROM storage UNION ALL SELECT 1 FROM snapshot LIMIT 1',
+            )
+            .get())
+        .isNotEmpty) {
+      return true;
+    }
+    for (final table in ['currency', 'liquidity_level']) {
+      final defaults = defaultCatalog(table);
+      for (final row in await db.customSelect('SELECT * FROM $table').get()) {
+        final original = defaults[row.read<String>('id')];
+        // HLC и автор засева различаются между устройствами. Сравниваем значения;
+        // пользовательские записи и надгробия тоже требуют предупреждения.
+        if (original == null ||
+            original.entries.any((e) => row.data[e.key] != e.value)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 
   Future<List<Map<String, dynamic>>> changes() async => [
     for (final row
@@ -125,8 +144,12 @@ class SyncJournal {
                 .map((r) => r.read<String>('name'))
                 .toSet();
         if (row.keys.toSet().difference(columns).isNotEmpty ||
-            columns.difference(row.keys.toSet()).isNotEmpty ||
-            row.values.any((v) => v != null && v is! String && v is! int) ||
+            columns.difference(row.keys.toSet()).isNotEmpty) {
+          throw const SyncFailure(
+            'Данные пришли с другой версии Delta. Обновите приложение на этом устройстве',
+          );
+        }
+        if (row.values.any((v) => v != null && v is! String && v is! int) ||
             !RegExp(r'^\d{13}:\d{10}:[a-f0-9-]{36}$')
                 .hasMatch(row['updated_at'] as String) ||
             !(row['updated_at'] as String).endsWith(':${row['device_id']}') ||
@@ -135,6 +158,8 @@ class SyncJournal {
           throw const FormatException();
         }
         result.add({'table': table, 'row': row});
+      } on SyncFailure {
+        rethrow;
       } catch (_) {
         throw const SyncFailure('Некорректная запись в журнале синхронизации.');
       }

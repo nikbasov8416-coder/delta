@@ -558,6 +558,135 @@ void main() {
     },
   );
 
+  test('Несовпадение колонок: отдельная ошибка версии, база и курсоры не меняются', () async {
+    await startBoth();
+    final meta = jsonDecode(
+      utf8.decode(disk.files['${syncRoot}meta']!),
+    ) as Map<String, dynamic>;
+    final crypto = await fastKdf(phrase, meta);
+    final original = (await a.repo.query(
+      'SELECT * FROM liquidity_level LIMIT 1',
+    )).single.values;
+    final before = <String, List<Object?>>{};
+    for (final table in [
+      ...syncTables,
+      'settings',
+      'sync_local',
+      'sync_outbox',
+    ]) {
+      before[table] = [
+        for (final row in await b.repo.query('SELECT * FROM $table'))
+          row.values,
+      ];
+    }
+    final edited = {
+      ...original,
+      'name': 'не должно примениться',
+      'updated_at': a.repo.clock.next(),
+    };
+    for (final missing in [false, true]) {
+      final incompatible = {...edited};
+      if (missing) {
+        incompatible.remove('color');
+      } else {
+        incompatible['future_column'] = 'выдуманное';
+      }
+      final bytes = await crypto.encrypt(
+        utf8.encode(
+          jsonEncode({
+            'format': 1,
+            'dataset': meta['dataset'],
+            'device': a.repo.deviceId,
+            'number': 2,
+            'entries': [
+              {'table': 'liquidity_level', 'row': edited},
+              {'table': 'liquidity_level', 'row': incompatible},
+            ],
+          }),
+        ),
+        '${meta['dataset']}|${a.repo.deviceId}|2',
+      );
+      disk.files['${syncRoot}log/${a.repo.deviceId}/00000000000000000002.bin'] =
+          bytes;
+      await b.sync.synchronize();
+      expect(
+        b.sync.error,
+        'Данные пришли с другой версии Delta. Обновите приложение на этом устройстве',
+      );
+      for (final table in before.keys) {
+        expect(
+          [
+            for (final row in await b.repo.query('SELECT * FROM $table'))
+              row.values,
+          ],
+          before[table],
+          reason: table,
+        );
+      }
+    }
+  });
+
+  test('Чистый засев не считается данными; слепок считается', () async {
+    expect(await a.sync.hasLocalData(), isFalse);
+    await a.repo.initialize();
+    expect(await a.sync.hasLocalData(), isFalse);
+    await a.repo.db.customStatement(
+      'INSERT INTO snapshot(id,updated_at,device_id,date,created_at) VALUES (?,?,?,?,?)',
+      [
+        device(90),
+        a.repo.clock.next(),
+        a.repo.deviceId,
+        '2026-01-10',
+        '2026-01-10T00:00:00Z',
+      ],
+    );
+    expect((await a.repo.overview()).storages, isEmpty);
+    expect(await a.sync.hasLocalData(), isTrue);
+  });
+
+  test('Изменённые, добавленные и удалённые справочники считаются пользовательскими данными', () async {
+    final catalog = await a.repo.overview();
+    final level = catalog.liquidity.first;
+    await a.repo.saveLiquidity(
+      id: level.id,
+      name: 'Выдуманная правка',
+      order: level.number('sort_order'),
+      color: level.number('color'),
+    );
+    expect(await a.sync.hasLocalData(), isTrue);
+    final currency = (await b.repo.overview()).currencies.first;
+    await b.repo.saveCurrency(
+      id: currency.id,
+      code: currency.text('code'),
+      name: 'Выдуманная правка',
+      kind: currency.text('kind'),
+      precision: currency.number('precision'),
+    );
+    expect(await b.sync.hasLocalData(), isTrue);
+    final fresh = await TestDevice.open(disk, 3);
+    try {
+      expect(await fresh.sync.hasLocalData(), isFalse);
+      await fresh.repo.saveLiquidity(
+        name: 'Дополнительная',
+        order: 99,
+        color: 1,
+      );
+      expect(await fresh.sync.hasLocalData(), isTrue);
+    } finally {
+      await fresh.close();
+    }
+    final deleted = await TestDevice.open(disk, 4);
+    try {
+      await deleted.repo.removeCatalogEntry(
+        'liquidity_level',
+        (await deleted.repo.overview()).liquidity.first.id,
+      );
+      expect(await deleted.sync.hasLocalData(), isTrue);
+    } finally {
+      await deleted.close();
+    }
+  });
+
   test('Ограничение WebDAV: никакого другого хоста, каталога, traversal', () {
     for (final path in [
       '/Apps/',

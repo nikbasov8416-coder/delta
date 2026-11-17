@@ -12,6 +12,7 @@ import '../domain/snapshots/snapshot_totals.dart';
 import '../domain/sync/hlc.dart';
 import '../domain/rates/rates.dart';
 import 'database/app_database.dart';
+import 'default_catalog.dart';
 
 class DriftFinanceRepository implements FinanceRepository {
   DriftFinanceRepository(
@@ -126,37 +127,13 @@ class DriftFinanceRepository implements FinanceRepository {
         clock.observe(rows.single.text('stamp'));
       }
     }
-    for (final spec in [
-      ('RUB', 'Рубль', 'fiat', 2, 'cbr'),
-      ('USD', 'Доллар США', 'fiat', 2, 'cbr'),
-      ('EUR', 'Евро', 'fiat', 2, 'cbr'),
-      ('CNY', 'Юань', 'fiat', 2, 'cbr'),
-      ('BTC', 'Биткоин', 'crypto', 8, 'coingecko'),
-      ('USDT', 'Tether', 'crypto', 6, 'coingecko'),
-    ]) {
-      await _insert('currency', {
-        ..._new(_uuid.v5(Namespace.url.value, 'delta/currency/${spec.$1}')),
-        'code': spec.$1,
-        'name': spec.$2,
-        'kind': spec.$3,
-        'precision': spec.$4,
-        'rate_source': spec.$5,
-      }, ignore: true);
-    }
-    const levels = [
-      'Сразу',
-      'До недели',
-      'Вклады до срока',
-      'Инвестиции',
-      'Долгосрочные (страхование)',
-    ];
-    for (var i = 0; i < levels.length; i++) {
-      await _insert('liquidity_level', {
-        ..._new(_uuid.v5(Namespace.url.value, 'delta/liquidity/$i')),
-        'name': levels[i],
-        'sort_order': i,
-        'color': 0xff26a69a + i * 0x00111111,
-      }, ignore: true);
+    for (final table in ['currency', 'liquidity_level']) {
+      for (final entry in defaultCatalog(table).entries) {
+        await _insert(table, {
+          ..._new(entry.key),
+          ...entry.value,
+        }, ignore: true);
+      }
     }
   });
 

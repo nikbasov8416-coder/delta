@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:delta/data/database/app_database.dart';
@@ -63,6 +64,85 @@ void main() {
       } finally {
         await repo.close();
       }
+    }
+  });
+  test('Повторное открытие обновляет INSERT/UPDATE-триггеры после новой колонки', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'delta-trigger-schema-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/synthetic.db');
+    final key = Uint8List.fromList(List.generate(32, (i) => i + 1));
+    const device = '00000000-0000-4000-8000-000000000001';
+    var repo = DriftFinanceRepository(
+      AppDatabase(encryptedConnection(file, key)),
+      device,
+    );
+    String id;
+    int count;
+    try {
+      await repo.initialize();
+      id = (await repo.overview()).currencies.first.id;
+      await repo.db.customStatement(
+        "ALTER TABLE currency ADD COLUMN future_note TEXT NOT NULL DEFAULT ''",
+      );
+      await repo.db.customStatement(
+        'UPDATE currency SET future_note=? WHERE id=?',
+        ['до открытия', id],
+      );
+      final oldPayload = (await repo.query(
+        "SELECT payload FROM sync_outbox WHERE entity='currency' ORDER BY seq DESC LIMIT 1",
+      )).single.text('payload');
+      expect(jsonDecode(oldPayload), isNot(contains('future_note')));
+      count = (await repo.query('SELECT count(*) AS n FROM sync_outbox')).single
+          .number('n');
+    } finally {
+      await repo.close();
+    }
+    repo = DriftFinanceRepository(
+      AppDatabase(encryptedConnection(file, key)),
+      device,
+    );
+    try {
+      expect(
+        (await repo.query('SELECT count(*) AS n FROM sync_outbox')).single
+            .number('n'),
+        count,
+      );
+      await repo.db.customStatement(
+        'UPDATE currency SET future_note=? WHERE id=?',
+        ['после открытия', id],
+      );
+      await repo.db.customStatement(
+        'INSERT INTO currency(id,updated_at,device_id,code,kind,precision,name,rate_source,future_note) VALUES (?,?,?,?,?,?,?,?,?)',
+        [
+          '00000000-0000-4000-8000-000000000077',
+          '1700000000000:0000000000:$device',
+          device,
+          'ZAR',
+          'fiat',
+          2,
+          'Выдуманная',
+          'cbr',
+          'новая запись',
+        ],
+      );
+      final payloads = await repo.query(
+        'SELECT payload FROM sync_outbox ORDER BY seq DESC LIMIT 2',
+      );
+      expect(
+        payloads.map(
+          (r) => (jsonDecode(r.text('payload')) as Map)['future_note'],
+        ),
+        ['новая запись', 'после открытия'],
+      );
+      expect(
+        (await repo.query('SELECT count(*) AS n FROM sync_outbox')).single
+            .number('n'),
+        count + 2,
+      );
+    } finally {
+      await repo.close();
     }
   });
 }

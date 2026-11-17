@@ -63,4 +63,35 @@ void main() {
       );
     },
   );
+  testWidgets('Чистое устройство: нет предупреждения и выбора замены', (
+    tester,
+  ) async {
+    final repo = await testRepository();
+    addTearDown(repo.close);
+    final service = SyncService(
+      repo,
+      MemorySecrets(),
+      diskFactory: (_, _) => FakeDisk(),
+    );
+    addTearDown(service.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [syncServiceProvider.overrideWith((ref) async => service)],
+        child: const MaterialApp(
+          home: Scaffold(body: SingleChildScrollView(child: SyncSettings())),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Подключиться'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Замена удалит локальные финансовые данные'),
+      findsNothing,
+    );
+    expect(find.byType(DropdownButtonFormField<bool>), findsNothing);
+    expect(find.text(syncLossWarning), findsWidgets);
+    await tester.tap(find.text('Отмена'));
+    await tester.pumpAndSettle();
+  });
 }
