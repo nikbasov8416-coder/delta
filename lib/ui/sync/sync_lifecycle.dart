@@ -10,6 +10,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers.dart';
 
+/// Подмена в тестах включает настоящий перехват закрытия и на Linux.
+final syncLifecycleWindowsProvider = Provider<bool>(
+  (ref) => Platform.isWindows,
+);
+
 /// Существует только после разблокировки приложения.
 class SyncLifecycle extends ConsumerStatefulWidget {
   const SyncLifecycle({required this.child, super.key});
@@ -26,7 +31,7 @@ class _SyncLifecycleState extends ConsumerState<SyncLifecycle>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    if (Platform.isWindows) {
+    if (ref.read(syncLifecycleWindowsProvider)) {
       _exitListener = AppLifecycleListener(
         onExitRequested: () async {
           final service = ref.read(syncServiceProvider).asData?.value;

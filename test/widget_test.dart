@@ -2,6 +2,7 @@ import 'package:decimal/decimal.dart';
 import 'package:delta/domain/rates/rates.dart';
 import 'package:delta/ui/app.dart';
 import 'package:delta/ui/providers.dart';
+import 'package:delta/ui/sync/sync_lifecycle.dart';
 import 'package:delta/domain/security/pin_service.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -46,6 +47,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          syncLifecycleWindowsProvider.overrideWithValue(true),
           secretStoreProvider.overrideWithValue(MemorySecrets()),
           pinServiceProvider.overrideWithValue(TestPin()),
           repositoryProvider.overrideWith((ref) async {
@@ -76,8 +78,12 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
     expect(find.text('Добавить место хранения'), findsOneWidget);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await tester.pump(const Duration(minutes: 1, seconds: 1));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
     expect(find.text('Вход в Delta'), findsOneWidget);
