@@ -55,6 +55,12 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+# local_auth_windows 2.0.2 использует /await и experimental/coroutine:
+# MSVC 14.51 останавливает сборку диагностикой STL1011.
+# https://github.com/microsoft/STL/search?q=STL1011&type=code
+# Убрать после обновления local_auth_windows до версии без /await.
+# Определение наследуют подкаталоги плагинов из generated_plugins.cmake.
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
 include(flutter/generated_plugins.cmake)
 
 
