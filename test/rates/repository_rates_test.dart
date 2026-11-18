@@ -85,6 +85,44 @@ void main() {
     },
   );
   test(
+    'Добавление места без истории создаёт пустые строки и загружает курсы',
+    () async {
+      final draft = await filled();
+      await repo.saveRate(draft, usd, '99');
+      final catalog = await repo.overview();
+      await repo.saveStorage(
+        name: 'Новое место',
+        type: 'cash',
+        liquidityId: catalog.liquidity.last.id,
+        organization: '',
+        note: '',
+        archived: false,
+        currencyIds: [rub, eur],
+      );
+      final id = (await repo.snapshot(draft)).missingStorages.single.id;
+      await repo.addSnapshotStorage(draft, id);
+      final detail = await repo.snapshot(draft);
+      final lines = detail.lines.where((l) => l.text('storage_id') == id);
+      expect(lines.map((l) => l.text('code')).toSet(), {'RUB', 'EUR'});
+      for (final line in lines) {
+        expect(line.values['amount'], isNull);
+        expect(line.text('family_amount'), '0');
+        expect(line.text('note'), isEmpty);
+        expect(line.flag('confirmed'), isFalse);
+      }
+      expect(gateway.fetchedCodes, [
+        {'USD'},
+        {'EUR'},
+      ]);
+      final rate = detail.rates.singleWhere((r) => r.text('code') == 'EUR');
+      expect(rate.text('rate_date'), '2026-01-10');
+      expect(rate.text('rate'), '2');
+      final manual = detail.rates.singleWhere((r) => r.text('code') == 'USD');
+      expect(manual.text('rate'), '99');
+      expect(manual.text('source'), 'manual');
+    },
+  );
+  test(
     'Сегодняшняя оценка не меняет сохранённые курсы, суммы и аудит',
     () async {
       final id = await filled();

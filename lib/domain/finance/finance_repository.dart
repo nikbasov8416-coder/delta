@@ -49,6 +49,8 @@ abstract interface class FinanceRepository {
     String storageId,
     String currencyId,
   );
+  Future<void> addSnapshotStorage(String snapshotId, String storageId);
+  Future<void> deleteDraft(String snapshotId);
   Future<void> saveRate(String snapshotId, String currencyId, String value);
   Future<void> saveSnapshotHeader(String id, String date, String note);
   Future<void> finalizeSnapshot(String id);

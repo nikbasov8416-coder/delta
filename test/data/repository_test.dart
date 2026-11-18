@@ -39,6 +39,103 @@ void main() {
     await repo.close();
   });
 
+  test(
+    'Добавление места копирует остатки из последнего слепка на дату',
+    () async {
+      await storage(name: 'Основное', currencies: [currency('RUB')]);
+      final added = await storage(
+        name: 'Позднее место',
+        currencies: [currency('RUB')],
+      );
+      Future<void> configure({
+        required bool archived,
+        required List<String> currencies,
+      }) => repo.saveStorage(
+        id: added,
+        name: 'Позднее место',
+        type: 'cash',
+        liquidityId: data.liquidity.last.id,
+        organization: '',
+        note: '',
+        archived: archived,
+        currencyIds: currencies,
+      );
+      Future<String> fix(String date, String amount) async {
+        final id = await repo.createSnapshot(date, '');
+        for (final line in (await repo.snapshot(id)).lines) {
+          await repo.saveLine(line.id, amount, '2.5', 'Остаток от $date');
+        }
+        await repo.finalizeSnapshot(id);
+        return id;
+      }
+
+      await fix('2026-01-01', '20');
+      final latest = await fix('2026-01-15', '30');
+      await fix('2026-01-20', '40');
+      await configure(archived: true, currencies: [currency('RUB')]);
+      final draft = await repo.createSnapshot('2026-01-15', '');
+      final first = (await repo.snapshot(draft)).lines.single.id;
+      await repo.saveLine(first, '123', '7', 'Уже введено');
+      expect((await repo.snapshot(draft)).missingStorages, isEmpty);
+      await expectLater(
+        repo.addSnapshotStorage(draft, added),
+        throwsStateError,
+      );
+
+      await configure(
+        archived: false,
+        currencies: [currency('RUB'), currency('USD')],
+      );
+      expect((await repo.snapshot(draft)).missingStorages.map((s) => s.id), [
+        added,
+      ]);
+      expect((await repo.snapshot(latest)).missingStorages, isEmpty);
+      await expectLater(
+        repo.addSnapshotStorage(latest, added),
+        throwsStateError,
+      );
+      await repo.addSnapshotStorage(draft, added);
+      final detail = await repo.snapshot(draft);
+      expect(detail.missingStorages, isEmpty);
+      final oldLine = detail.lines.singleWhere((line) => line.id == first);
+      expect(oldLine.text('amount'), '123');
+      expect(oldLine.text('note'), 'Уже введено');
+      final rows = detail.lines.where((l) => l.text('storage_id') == added);
+      final copied = rows.singleWhere((line) => line.text('code') == 'RUB');
+      expect(copied.text('amount'), '30');
+      expect(copied.text('family_amount'), '2.5');
+      expect(copied.text('note'), 'Остаток от 2026-01-15');
+      final empty = rows.singleWhere((line) => line.text('code') == 'USD');
+      expect(empty.values['amount'], isNull);
+      expect(empty.text('family_amount'), '0');
+      expect(empty.text('note'), isEmpty);
+      expect(rows.map((line) => line.text('liquidity_id')).toSet(), {
+        data.liquidity.last.id,
+      });
+      expect(rows.every((line) => !line.flag('confirmed')), isTrue);
+      await expectLater(
+        repo.addSnapshotStorage(draft, added),
+        throwsStateError,
+      );
+    },
+  );
+
+  test('Удаление допустимо только для черновика', () async {
+    await storage(currencies: [currency('RUB')]);
+    final id = await repo.createSnapshot('2026-01-01', '');
+    await repo.saveLine(
+      (await repo.snapshot(id)).lines.single.id,
+      '12',
+      '2',
+      '',
+    );
+    await repo.finalizeSnapshot(id);
+    await expectLater(repo.deleteDraft(id), throwsStateError);
+    expect((await repo.snapshot(id)).header.text('status'), 'fixed');
+    expect((await repo.snapshot(id)).rates, hasLength(1));
+    expect((await repo.totals(id)).rubles.total, Decimal.parse('12'));
+  });
+
   test('Начальная схема, валюты, метаданные, HLC и повторный запуск', () async {
     expect(data.currencies.map((c) => c.text('code')).toSet(), {
       'RUB',

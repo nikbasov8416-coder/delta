@@ -33,7 +33,7 @@ class TestDevice {
   final DriftFinanceRepository repo;
   final MemorySecrets secrets;
   final SyncService sync;
-  static Future<TestDevice> open(FakeDisk disk, int n) async {
+  static Future<TestDevice> open(FakeDisk disk, int n, {int format = 1}) async {
     final repo = DriftFinanceRepository(
       memoryDatabase(),
       device(n),
@@ -46,7 +46,7 @@ class TestDevice {
       secrets,
       diskFactory: (_) => disk,
       derive: fastKdf,
-      initialFormat: 1,
+      initialFormat: format,
     );
     return TestDevice(repo, secrets, sync);
   }
@@ -150,6 +150,109 @@ void main() {
     await b.setup();
     expect(b.sync.error, isNull);
   }
+
+  for (final deletionFirst in [true, false]) {
+    test('Format 2: удаление и более поздняя правка черновика, '
+        'сначала ${deletionFirst ? 'удаление' : 'правка'}', () async {
+      final author = await TestDevice.open(disk, 3, format: 2);
+      final observer = await TestDevice.open(disk, 4);
+      final fresh = await TestDevice.open(disk, 5);
+      addTearDown(author.close);
+      addTearDown(observer.close);
+      addTearDown(fresh.close);
+      final place = await addStorage(author, 'Пробное место');
+      final id = await author.repo.createSnapshot('2026-01-15', 'Черновик');
+      await author.setup(create: true);
+      await b.setup();
+      await observer.setup();
+      expect([
+        author.sync.error,
+        b.sync.error,
+        observer.sync.error,
+      ], everyElement(isNull));
+
+      await author.repo.deleteDraft(id);
+      // Устройство B работает автономно. Его часы опережают A.
+      b.repo.clock.observe('1700000000001:0000000000:${b.repo.deviceId}');
+      final line = (await b.repo.snapshot(id)).lines.single;
+      await b.repo.saveLine(line.id, '50', '2', 'Автономная правка');
+      final rub = (await b.repo.overview()).currencies
+          .singleWhere((c) => c.text('code') == 'RUB')
+          .id;
+      await b.repo.addSnapshotCurrency(id, place, rub);
+      await b.repo.saveRate(id, rub, '1');
+      final editedStamp = (await b.repo.snapshot(id)).header.text('updated_at');
+
+      final first = deletionFirst ? author : b;
+      final second = deletionFirst ? b : author;
+      await first.sync.synchronize(uploadOnly: true);
+      await observer.sync.synchronize();
+      expect(first.sync.error, isNull);
+      expect(observer.sync.error, isNull);
+      if (deletionFirst) {
+        expect((await observer.repo.overview()).snapshots, isEmpty);
+      } else {
+        final detail = await observer.repo.snapshot(id);
+        expect(
+          detail.lines.singleWhere((row) => row.id == line.id).text('amount'),
+          '50',
+        );
+      }
+      await second.sync.synchronize(uploadOnly: true);
+      await observer.sync.synchronize();
+      await author.sync.synchronize();
+      await b.sync.synchronize();
+      await fresh.setup(); // Обе версии приходят за один обмен.
+      for (final device in [author, b, observer, fresh]) {
+        expect(device.sync.error, isNull);
+        final repo = device.repo;
+        final header = (await repo.query('SELECT * FROM snapshot WHERE id=?', [
+          id,
+        ])).single;
+        expect(header.flag('deleted'), isTrue);
+        expect(header.text('updated_at'), editedStamp);
+        expect((await repo.overview()).snapshots, isEmpty);
+        expect((await repo.reportSnapshots()).snapshots, isEmpty);
+        await expectLater(repo.snapshot(id), throwsStateError);
+        await expectLater(repo.totals(id), throwsStateError);
+        expect(await repo.query('PRAGMA foreign_key_check'), isEmpty);
+        expect(await device.sync.journal.changes(), isEmpty);
+      }
+      final lateRows = await observer.repo.query(
+        'SELECT * FROM snapshot_line WHERE snapshot_id=? AND deleted=0',
+        [id],
+      );
+      expect(lateRows, hasLength(2));
+      expect(
+        await observer.repo.query(
+          'SELECT * FROM snapshot_rate WHERE snapshot_id=? AND deleted=0',
+          [id],
+        ),
+        hasLength(1),
+      );
+    });
+  }
+
+  test(
+    'Удалённый заголовок сам по себе не считается локальными данными',
+    () async {
+      expect(await a.sync.hasLocalData(), isFalse);
+      const id = '00000000-0000-4000-8000-000000009999';
+      await a.repo.db.customStatement(
+        'INSERT INTO snapshot (id,updated_at,device_id,date,created_at) VALUES (?,?,?,?,?)',
+        [
+          id,
+          a.repo.clock.next(),
+          a.repo.deviceId,
+          '2026-01-15',
+          '2026-01-15T12:00:00Z',
+        ],
+      );
+      expect(await a.sync.hasLocalData(), isTrue);
+      await a.repo.deleteDraft(id);
+      expect(await a.sync.hasLocalData(), isFalse);
+    },
+  );
 
   test('Восстановление чистого устройства полное, курс-кэш тоже; безопасность не уходит', () async {
     await addStorage(a, 'Выдуманное место');

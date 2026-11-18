@@ -30,6 +30,7 @@ typedef FinanceTables = Map<String, List<Map<String, Object?>>>;
 Future<FinanceTables> readFinanceTables(
   AppDatabase db, {
   bool includeDeleted = true,
+  bool excludeDeletedSnapshots = false,
 }) => db.transaction(
   () async => {
     for (final table in _tables)
@@ -37,13 +38,33 @@ Future<FinanceTables> readFinanceTables(
         for (final row
             in await db
                 .customSelect(
-                  'SELECT * FROM $table ${includeDeleted ? '' : 'WHERE deleted=0'} ORDER BY id',
+                  _tableSelect(
+                    table,
+                    includeDeleted: includeDeleted,
+                    excludeDeletedSnapshots: excludeDeletedSnapshots,
+                  ),
                 )
                 .get())
           row.data,
       ],
   },
 );
+
+String _tableSelect(
+  String table, {
+  required bool includeDeleted,
+  required bool excludeDeletedSnapshots,
+}) {
+  final filters = [
+    if (!includeDeleted || (excludeDeletedSnapshots && table == 'snapshot'))
+      'deleted=0',
+    if ((!includeDeleted || excludeDeletedSnapshots) &&
+        const ['snapshot_line', 'snapshot_rate', 'audit_log'].contains(table))
+      'snapshot_id IN (SELECT id FROM snapshot WHERE deleted=0)',
+  ];
+  final where = filters.isEmpty ? '' : 'WHERE ${filters.join(' AND ')} ';
+  return 'SELECT * FROM $table ${where}ORDER BY id';
+}
 
 class BackupFailure implements Exception {
   const BackupFailure(this.message);
@@ -74,7 +95,7 @@ class FinanceCopy {
 
   Future<Uint8List> create(String password) async {
     if (password.isEmpty) throw const BackupFailure('Введите пароль копии.');
-    final tables = await readFinanceTables(_db);
+    final tables = await readFinanceTables(_db, excludeDeletedSnapshots: true);
     final created = sync.repository.now().toUtc().toIso8601String();
     final salt = SyncCrypto.newSalt();
     final header = jsonEncode({

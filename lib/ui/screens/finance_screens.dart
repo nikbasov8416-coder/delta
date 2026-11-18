@@ -773,6 +773,8 @@ class SnapshotScreen extends ConsumerWidget {
                   child: const Text('Изменить дату и заметку'),
                 ),
               ),
+              if (detail.header.text('status') == 'draft')
+                _draftActions(context, ref, detail),
               Text(
                 'Заполнено ${detail.lines.where((l) => l.flag('confirmed')).length} из ${detail.lines.length}',
               ),
@@ -824,6 +826,15 @@ class SnapshotScreen extends ConsumerWidget {
               if (detail.header.text('status') == 'fixed')
                 const Text(
                   'Изменения сумм, курсов, даты и заметок записываются в историю.',
+                ),
+              if (detail.missingStorages.isNotEmpty)
+                AppMessage(
+                  'Мест нет в черновике: ${detail.missingStorages.length}',
+                  kind: MessageKind.warning,
+                  action: TextButton(
+                    onPressed: () => _addStorage(context, ref, detail),
+                    child: const Text('Добавить'),
+                  ),
                 ),
               ..._positionGroups(context, ref, detail),
               const Divider(),
@@ -882,10 +893,118 @@ class SnapshotScreen extends ConsumerWidget {
                     amountsHidden(ref),
                   ),
                 ),
+              if (detail.header.text('status') == 'draft')
+                const ExpansionTile(
+                  title: Text('Справка по черновику'),
+                  children: [
+                    ListTile(
+                      title: Text('Добавить место'),
+                      subtitle: Text(
+                        'Выберите место, которого ещё нет в черновике. '
+                        'Delta добавит его активные валюты и подставит '
+                        'суммы из последнего зафиксированного слепка на эту дату.',
+                      ),
+                    ),
+                    ListTile(
+                      title: Text('Удалить черновик'),
+                      subtitle: Text(
+                        'После подтверждения черновик исчезнет вместе с суммами '
+                        'и курсами. Зафиксированный слепок удалить нельзя.',
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
   );
+  Widget _draftActions(
+    BuildContext context,
+    WidgetRef ref,
+    SnapshotDetail detail,
+  ) => Wrap(
+    spacing: 8,
+    children: [
+      TextButton.icon(
+        onPressed: detail.missingStorages.isEmpty
+            ? null
+            : () => _addStorage(context, ref, detail),
+        icon: const Icon(Icons.add),
+        label: const Text('Добавить место'),
+      ),
+      TextButton.icon(
+        style: TextButton.styleFrom(
+          foregroundColor: Theme.of(context).colorScheme.error,
+        ),
+        onPressed: () => _deleteDraft(context, ref, detail),
+        icon: const Icon(Icons.delete_outline),
+        label: const Text('Удалить черновик'),
+      ),
+    ],
+  );
+
+  Future<void> _addStorage(
+    BuildContext context,
+    WidgetRef ref,
+    SnapshotDetail detail,
+  ) => editDialog(
+    context,
+    'Добавить место',
+    [
+      EditField(
+        'storage',
+        'Место хранения',
+        initial: detail.missingStorages.first.id,
+        options: {
+          for (final place in detail.missingStorages)
+            place.id: place.text('name'),
+        },
+      ),
+    ],
+    (values, _) async {
+      try {
+        await (await _repo(ref)).addSnapshotStorage(id, values['storage']!);
+      } finally {
+        if (context.mounted) refreshFinance(ref, id);
+      }
+    },
+  );
+
+  Future<void> _deleteDraft(
+    BuildContext context,
+    WidgetRef ref,
+    SnapshotDetail detail,
+  ) async {
+    final date = displayDate(detail.header.text('date'));
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text('Удалить черновик от $date?'),
+        content: const Text('Введённые в нём суммы пропадут'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            style: destructiveStyle(dialog),
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await (await _repo(ref)).deleteDraft(id);
+      if (!context.mounted) return;
+      refreshFinance(ref, id);
+      context.go('/snapshots');
+    } catch (error) {
+      if (context.mounted) AppMessage.show(context, friendlyError(error));
+    }
+  }
+
   List<Widget> _positionGroups(
     BuildContext context,
     WidgetRef ref,

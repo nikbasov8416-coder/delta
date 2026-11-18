@@ -37,12 +37,14 @@ class SnapshotDetail {
     this.rates,
     this.audit, {
     this.rateErrors = const {},
+    this.missingStorages = const [],
   });
   final FinanceRecord header;
   final List<FinanceRecord> lines;
   final List<FinanceRecord> rates;
   final List<FinanceRecord> audit;
   final Map<String, String> rateErrors;
+  final List<FinanceRecord> missingStorages;
 }
 
 class SnapshotValuation {

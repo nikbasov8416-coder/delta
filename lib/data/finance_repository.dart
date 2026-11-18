@@ -193,7 +193,8 @@ class DriftFinanceRepository implements FinanceRepository {
         throw StateError('Код стандартной валюты менять нельзя');
       }
       final used = await query(
-        'SELECT id FROM snapshot_line WHERE currency_id=? LIMIT 1',
+        'SELECT sl.id FROM snapshot_line sl JOIN snapshot sn ON sn.id=sl.snapshot_id '
+        'WHERE sl.currency_id=? AND sl.deleted=0 AND sn.deleted=0 LIMIT 1',
         [id],
       );
       if (used.isNotEmpty &&
@@ -240,31 +241,36 @@ class DriftFinanceRepository implements FinanceRepository {
   }
 
   @override
-  Future<void> removeCatalogEntry(String catalog, String id) =>
-      db.transaction(() async {
-        if (!['currency', 'liquidity_level'].contains(catalog)) {
-          throw ArgumentError('Справочник');
+  Future<void> removeCatalogEntry(String catalog, String id) => db.transaction(
+    () async {
+      if (!['currency', 'liquidity_level'].contains(catalog)) {
+        throw ArgumentError('Справочник');
+      }
+      await _one(catalog, id);
+      final checks = catalog == 'currency'
+          ? [
+              ('storage_currency', 'currency_id'),
+              ('snapshot_line', 'currency_id'),
+              ('snapshot_rate', 'currency_id'),
+            ]
+          : [('storage', 'liquidity_id'), ('snapshot_line', 'liquidity_id')];
+      for (final check in checks) {
+        final snapshotChild = check.$1.startsWith('snapshot_');
+        if ((await query(
+          'SELECT c.id FROM ${check.$1} c '
+          '${snapshotChild ? 'JOIN snapshot sn ON sn.id=c.snapshot_id ' : ''}'
+          'WHERE c.${check.$2}=? '
+          '${snapshotChild ? 'AND c.deleted=0 AND sn.deleted=0 ' : ''}LIMIT 1',
+          [id],
+        )).isNotEmpty) {
+          throw StateError(
+            'Запись используется; удаление запрещено для сохранения истории',
+          );
         }
-        await _one(catalog, id);
-        final checks = catalog == 'currency'
-            ? [
-                ('storage_currency', 'currency_id'),
-                ('snapshot_line', 'currency_id'),
-                ('snapshot_rate', 'currency_id'),
-              ]
-            : [('storage', 'liquidity_id'), ('snapshot_line', 'liquidity_id')];
-        for (final check in checks) {
-          if ((await query(
-            'SELECT id FROM ${check.$1} WHERE ${check.$2}=? LIMIT 1',
-            [id],
-          )).isNotEmpty) {
-            throw StateError(
-              'Запись используется; удаление запрещено для сохранения истории',
-            );
-          }
-        }
-        await _update(catalog, id, {'deleted': 1});
-      });
+      }
+      await _update(catalog, id, {'deleted': 1});
+    },
+  );
 
   @override
   Future<void> saveStorage({
@@ -336,72 +342,177 @@ class DriftFinanceRepository implements FinanceRepository {
     return id;
   }
 
-  Future<String> _createSnapshot(String date, String note) => db.transaction(
-    () async {
-      _date(date);
-      final id = _uuid.v4();
-      // Последний слепок на выбранную дату: будущие значения не копируем назад.
-      final previous = await query(
-        "SELECT id FROM snapshot WHERE deleted=0 AND status='fixed' AND date<=? ORDER BY date DESC,created_at DESC LIMIT 1",
-        [date],
-      );
-      await _insert('snapshot', {
-        ..._new(id),
-        'date': date,
-        'note': note.trim(),
-        'status': 'draft',
-        'created_at': DateTime.now().toUtc().toIso8601String(),
+  Future<String> _createSnapshot(String date, String note) =>
+      db.transaction(() async {
+        _date(date);
+        final id = _uuid.v4();
+        await _insert('snapshot', {
+          ..._new(id),
+          'date': date,
+          'note': note.trim(),
+          'status': 'draft',
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        });
+        final pairs = await _activeStorageCurrencies();
+        if (pairs.isEmpty) {
+          throw StateError('Сначала добавьте место хранения и валюту');
+        }
+        await _insertSnapshotLines(id, date, pairs);
+        return id;
       });
-      final pairs = await query(
-        'SELECT sc.*,s.liquidity_id FROM storage_currency sc JOIN storage s ON s.id=sc.storage_id JOIN currency c ON c.id=sc.currency_id WHERE sc.deleted=0 AND sc.active=1 AND s.deleted=0 AND s.archived=0 AND c.deleted=0',
+
+  Future<List<FinanceRecord>> _activeStorageCurrencies([String? storageId]) =>
+      query(
+        '''
+        SELECT sc.*,s.liquidity_id
+        FROM storage_currency sc
+        JOIN storage s ON s.id=sc.storage_id
+        JOIN currency c ON c.id=sc.currency_id
+        WHERE sc.deleted=0 AND sc.active=1 AND s.deleted=0
+          AND s.archived=0 AND c.deleted=0
+        '''
+        '${storageId == null ? '' : ' AND s.id=?'}',
+        [?storageId],
       );
-      if (pairs.isEmpty) {
-        throw StateError('Сначала добавьте место хранения и валюту');
-      }
-      for (final pair in pairs) {
-        final old = previous.isEmpty
-            ? <FinanceRecord>[]
-            : await query(
-                'SELECT * FROM snapshot_line WHERE snapshot_id=? AND storage_id=? AND currency_id=? AND deleted=0',
-                [
-                  previous.single.id,
-                  pair.text('storage_id'),
-                  pair.text('currency_id'),
-                ],
-              );
+
+  Future<void> _insertSnapshotLines(
+    String id,
+    String date,
+    List<FinanceRecord> pairs, {
+    Map<String, String> deletedByCurrency = const {},
+  }) async {
+    // Берём один последний зафиксированный слепок на дату, без поиска по более старым.
+    final previous = await query(
+      '''
+      SELECT storage_id,currency_id,amount,family_amount,note
+      FROM snapshot_line
+      WHERE deleted=0 AND snapshot_id=(
+        SELECT id FROM snapshot WHERE deleted=0 AND status='fixed' AND date<=?
+        ORDER BY date DESC,created_at DESC LIMIT 1
+      )
+      ''',
+      [date],
+    );
+    final byPair = {
+      for (final line in previous)
+        (line.text('storage_id'), line.text('currency_id')): line,
+    };
+    for (final pair in pairs) {
+      final storageId = pair.text('storage_id');
+      final currencyId = pair.text('currency_id');
+      final old = byPair[(storageId, currencyId)];
+      final fields = {
+        'liquidity_id': pair.text('liquidity_id'),
+        'amount': old?.values['amount'],
+        'family_amount': old?.text('family_amount') ?? '0',
+        'note': old?.text('note') ?? '',
+        'confirmed': 0,
+      };
+      final deletedId = deletedByCurrency[currencyId];
+      if (deletedId == null) {
         await _insert('snapshot_line', {
           ..._new(),
           'snapshot_id': id,
-          'storage_id': pair.text('storage_id'),
-          'currency_id': pair.text('currency_id'),
-          'liquidity_id': pair.text('liquidity_id'),
-          'amount': old.isEmpty ? null : old.single.values['amount'],
-          'family_amount': old.isEmpty ? '0' : old.single.text('family_amount'),
-          'note': old.isEmpty ? '' : old.single.text('note'),
-          'confirmed': 0,
+          'storage_id': storageId,
+          'currency_id': currencyId,
+          ...fields,
         });
+      } else {
+        await _update('snapshot_line', deletedId, {...fields, 'deleted': 0});
       }
-      return id;
-    },
-  );
+    }
+  }
 
   @override
-  Future<SnapshotDetail> snapshot(String id) async => SnapshotDetail(
-    await _one('snapshot', id),
-    await query(
-      'SELECT sl.*,s.name AS storage_name,c.code,c.precision,c.kind,l.name AS liquidity_name,l.sort_order AS liquidity_order FROM snapshot_line sl JOIN storage s ON s.id=sl.storage_id JOIN currency c ON c.id=sl.currency_id JOIN liquidity_level l ON l.id=sl.liquidity_id WHERE sl.snapshot_id=? AND sl.deleted=0 ORDER BY l.sort_order,s.sort_order,s.name,c.code',
-      [id],
-    ),
-    await query(
-      'SELECT sr.*,c.code FROM snapshot_rate sr JOIN currency c ON c.id=sr.currency_id WHERE sr.snapshot_id=? AND sr.deleted=0 ORDER BY c.code',
-      [id],
-    ),
-    await query(
-      'SELECT * FROM audit_log WHERE snapshot_id=? AND deleted=0 ORDER BY updated_at DESC',
-      [id],
-    ),
-    rateErrors: Map.unmodifiable(_rateIssues[id] ?? {}),
-  );
+  Future<void> addSnapshotStorage(String snapshotId, String storageId) async {
+    await db.transaction(() async {
+      final header = await _one('snapshot', snapshotId);
+      if (header.text('status') != 'draft') {
+        throw StateError('Добавить место можно в черновике');
+      }
+      final existing = await query(
+        'SELECT * FROM snapshot_line WHERE snapshot_id=? AND storage_id=?',
+        [snapshotId, storageId],
+      );
+      if (existing.any((line) => !line.flag('deleted'))) {
+        throw StateError('Это место уже есть в черновике');
+      }
+      final pairs = await _activeStorageCurrencies(storageId);
+      if (pairs.isEmpty) throw StateError('Место хранения недоступно');
+      await _insertSnapshotLines(
+        snapshotId,
+        header.text('date'),
+        pairs,
+        deletedByCurrency: {
+          for (final line in existing) line.text('currency_id'): line.id,
+        },
+      );
+      await _update('snapshot', snapshotId, {});
+    });
+    if (gateway != null) await refreshSnapshotRates(snapshotId, force: false);
+  }
+
+  @override
+  Future<void> deleteDraft(String snapshotId) async {
+    await db.transaction(() async {
+      final header = await _one('snapshot', snapshotId);
+      if (header.text('status') != 'draft') {
+        throw StateError('Удалить можно только черновик');
+      }
+      await _update('snapshot', snapshotId, {'deleted': 1});
+      for (final table in ['snapshot_line', 'snapshot_rate']) {
+        final rows = await query(
+          'SELECT id FROM $table WHERE snapshot_id=? AND deleted=0',
+          [snapshotId],
+        );
+        for (final row in rows) {
+          await _update(table, row.id, {'deleted': 1});
+        }
+      }
+    });
+    _rateIssues.remove(snapshotId);
+  }
+
+  @override
+  Future<SnapshotDetail> snapshot(String id) => db.transaction(() async {
+    final header = await _one('snapshot', id);
+    return SnapshotDetail(
+      header,
+      await query(
+        'SELECT sl.*,s.name AS storage_name,c.code,c.precision,c.kind,l.name AS liquidity_name,l.sort_order AS liquidity_order FROM snapshot_line sl JOIN storage s ON s.id=sl.storage_id JOIN currency c ON c.id=sl.currency_id JOIN liquidity_level l ON l.id=sl.liquidity_id WHERE sl.snapshot_id=? AND sl.deleted=0 ORDER BY l.sort_order,s.sort_order,s.name,c.code',
+        [id],
+      ),
+      await query(
+        'SELECT sr.*,c.code FROM snapshot_rate sr JOIN currency c ON c.id=sr.currency_id WHERE sr.snapshot_id=? AND sr.deleted=0 ORDER BY c.code',
+        [id],
+      ),
+      await query(
+        'SELECT * FROM audit_log WHERE snapshot_id=? AND deleted=0 ORDER BY updated_at DESC',
+        [id],
+      ),
+      rateErrors: Map.unmodifiable(_rateIssues[id] ?? {}),
+      missingStorages: header.text('status') == 'draft'
+          ? await query(
+              '''
+              SELECT s.id,s.name
+              FROM storage s
+              WHERE s.deleted=0 AND s.archived=0
+                AND EXISTS (
+                  SELECT 1 FROM storage_currency sc
+                  JOIN currency c ON c.id=sc.currency_id
+                  WHERE sc.storage_id=s.id AND sc.active=1 AND sc.deleted=0 AND c.deleted=0
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM snapshot_line sl
+                  WHERE sl.snapshot_id=? AND sl.storage_id=s.id AND sl.deleted=0
+                )
+              ORDER BY s.sort_order,s.name,s.id
+              ''',
+              [id],
+            )
+          : const [],
+    );
+  });
 
   Future<void> _audit(
     FinanceRecord header,
@@ -945,7 +1056,7 @@ class DriftFinanceRepository implements FinanceRepository {
   }
 
   @override
-  Future<ReportData> reportSnapshots() async {
+  Future<ReportData> reportSnapshots() => db.transaction(() async {
     final result = <ReportSnapshot>[];
     final excludedDates = <String>[];
     final headers = await query(
@@ -1003,7 +1114,7 @@ class DriftFinanceRepository implements FinanceRepository {
       result.add(report);
     }
     return ReportData(result, excludedDates: excludedDates);
-  }
+  });
 
   @override
   Future<void> close() async {

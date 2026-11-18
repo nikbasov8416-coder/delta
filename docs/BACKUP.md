@@ -27,7 +27,8 @@
 4. После расшифровки — JSON с `created_at` в UTC и `tables`. Таблицы
    `currency`, `liquidity_level`, `storage`, `storage_currency`,
    `snapshot`, `snapshot_line`, `snapshot_rate` и `audit_log`
-   записаны целиком, включая `deleted`, HLC `updated_at` и `device_id`.
+   сохраняют поля `deleted`, HLC `updated_at` и `device_id`. Удалённые
+   слепки и все связанные с ними строки, курсы и аудит исключаются.
    Суммы остаются строками Decimal. До предпросмотра типы, ограничения
    и внешние ключи дополнительно проверяются в отдельной SQLite-базе в памяти.
 

@@ -95,7 +95,8 @@ class SyncJournal {
   Future<bool> hasData() async {
     if ((await db
             .customSelect(
-              'SELECT 1 FROM storage UNION ALL SELECT 1 FROM snapshot LIMIT 1',
+              'SELECT 1 FROM storage UNION ALL '
+              'SELECT 1 FROM snapshot WHERE deleted=0 LIMIT 1',
             )
             .get())
         .isNotEmpty) {
@@ -177,9 +178,13 @@ class SyncJournal {
     // промежуточная версия из старой пачки может нарушить UNIQUE, хотя итоговая
     // запись уже исправлена пользователем (например, переименован код валюты).
     final latest = <String, Map<String, dynamic>>{};
+    final deletedSnapshots = <String>{};
     for (final entry in entries) {
       final row = entry['row'] as Map;
       final key = "${entry['table']}:${row['id']}";
+      if (entry['table'] == 'snapshot' && row['deleted'] == 1) {
+        deletedSnapshots.add(row['id'] as String);
+      }
       final old = latest[key]?['row'] as Map?;
       if (old == null ||
           (row['updated_at'] as String).compareTo(old['updated_at'] as String) >
@@ -192,7 +197,7 @@ class SyncJournal {
       final row = Map<String, dynamic>.from(entry['row'] as Map);
       var old = await db
           .customSelect(
-            'SELECT id,updated_at FROM $table WHERE id=?',
+            'SELECT id,updated_at,deleted FROM $table WHERE id=?',
             variables: [variable(row['id'])],
           )
           .get();
@@ -222,11 +227,24 @@ class SyncJournal {
         if (old.isNotEmpty) row['id'] = old.single.read<String>('id');
       }
       clock.observe(row['updated_at'] as String);
+      // Обычные поля и отметки остаются под LWW. Удаление слепка окончательно.
+      final oldDeleted =
+          old.isNotEmpty &&
+          table == 'snapshot' &&
+          old.single.read<int>('deleted') == 1;
+      final incomingDeletion =
+          table == 'snapshot' && deletedSnapshots.contains(row['id']);
+      if (oldDeleted || incomingDeletion) row['deleted'] = 1;
       if (old.isNotEmpty &&
           old.single
                   .read<String>('updated_at')
                   .compareTo(row['updated_at'] as String) >=
               0) {
+        if (incomingDeletion && !oldDeleted) {
+          await db.customStatement('UPDATE snapshot SET deleted=1 WHERE id=?', [
+            row['id'],
+          ]);
+        }
         continue;
       }
       final keys = row.keys.toList();

@@ -102,7 +102,11 @@ final snapshotProvider = FutureProvider.family<SnapshotDetail, String>(
 void refreshFinance(WidgetRef ref, [String? id]) {
   ref.invalidate(overviewProvider);
   ref.invalidate(reportSnapshotsProvider);
-  if (id != null) ref.invalidate(snapshotProvider(id));
+  if (id == null) {
+    ref.invalidate(snapshotProvider);
+  } else {
+    ref.invalidate(snapshotProvider(id));
+  }
 }
 
 final syncServiceProvider = FutureProvider.autoDispose<SyncService?>((

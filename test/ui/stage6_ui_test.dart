@@ -32,6 +32,7 @@ Future<void> prepareFont() async {
 
 void main() {
   const capture = bool.fromEnvironment('DELTA_CAPTURE_UI');
+  const captureDraft = bool.fromEnvironment('DELTA_CAPTURE_DRAFT');
   for (final width in [360.0, 1280.0]) {
     for (final brightness in Brightness.values) {
       testWidgets('Экраны Delta, ${width.toInt()} dp, ${brightness.name}', (
@@ -39,7 +40,8 @@ void main() {
       ) async {
         await tester.binding.setSurfaceSize(Size(width, 920));
         addTearDown(() => tester.binding.setSurfaceSize(null));
-        if (capture) await tester.runAsync(prepareFont);
+        final draftPreview = captureDraft && brightness == Brightness.light;
+        if (capture || draftPreview) await tester.runAsync(prepareFont);
         final repo = await testRepository();
         addTearDown(repo.close);
         final catalog = await repo.overview();
@@ -127,7 +129,7 @@ void main() {
                 child: MaterialApp.router(
                   routerConfig: ref.watch(appRouterProvider),
                   debugShowCheckedModeBanner: false,
-                  theme: capture
+                  theme: capture || draftPreview
                       ? theme.copyWith(
                           textTheme: theme.textTheme.apply(
                             fontFamily: 'Preview',
@@ -154,9 +156,9 @@ void main() {
           tester.element(find.byType(Consumer)),
         );
         final router = container.read(appRouterProvider);
-        Future<void> save(String page) async {
+        Future<void> save(String page, {bool enabled = capture}) async {
           expect(tester.takeException(), isNull);
-          if (!capture) return;
+          if (!enabled) return;
           await tester.runAsync(() async {
             final boundary =
                 key.currentContext!.findRenderObject()!
@@ -190,6 +192,9 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('Учебный слепок'), findsOneWidget);
         expect(find.text('Зафиксирован'), findsOneWidget);
+        expect(find.textContaining('Мест нет в черновике'), findsNothing);
+        expect(find.text('Добавить место'), findsNothing);
+        expect(find.text('Удалить черновик'), findsNothing);
         expect(find.text('Нулевое место'), findsNothing);
         expect(find.text('USD: 0,00'), findsNothing);
         expect(find.textContaining('RUB: 502'), findsOneWidget);
@@ -241,12 +246,74 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.widgetWithText(AppBar, 'Ещё'), findsOneWidget);
         }
-        final draft = await repo.createSnapshot('2026-11-18', '');
+        final draft = await repo.createSnapshot(
+          '2026-11-18',
+          'Учебный черновик',
+        );
         await repo.saveRate(draft, btc, '6500000');
         await repo.saveRate(draft, usd, '92.15');
+        await repo.saveStorage(
+          name: 'Архивное место',
+          type: 'cash',
+          liquidityId: catalog.liquidity.first.id,
+          organization: '',
+          note: '',
+          archived: true,
+          currencyIds: [rub],
+        );
+        router.go('/snapshots/$draft');
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Мест нет в черновике'), findsNothing);
+        router.go('/storage');
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Добавить место хранения'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).first, 'Новый конверт');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pumpAndSettle();
+        final rubChoice = find.widgetWithText(CheckboxListTile, 'RUB');
+        await Scrollable.ensureVisible(
+          tester.element(rubChoice),
+          alignment: .5,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(rubChoice);
+        await tester.pump();
+        expect(tester.widget<CheckboxListTile>(rubChoice).value, isTrue);
+        await tester.tap(find.text('Сохранить'));
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsNothing);
         router.go('/snapshots/$draft');
         await tester.pumpAndSettle();
         expect(find.text('Черновик'), findsOneWidget);
+        expect(find.text('Добавить место'), findsOneWidget);
+        expect(find.text('Удалить черновик'), findsOneWidget);
+        final warning = find.widgetWithText(
+          AppMessage,
+          'Мест нет в черновике: 1',
+        );
+        expect(warning, findsOneWidget);
+        await save('draft', enabled: draftPreview);
+        await tester.tap(
+          find.descendant(of: warning, matching: find.text('Добавить')),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.widgetWithText(AlertDialog, 'Добавить место'),
+          findsOneWidget,
+        );
+        expect(find.text('Новый конверт'), findsOneWidget);
+        expect(find.text('Архивное место'), findsNothing);
+        await tester.tap(find.text('Сохранить'));
+        await tester.pumpAndSettle();
+        expect(warning, findsNothing);
+        final add = find.widgetWithText(TextButton, 'Добавить место');
+        expect(tester.widget<TextButton>(add).onPressed, isNull);
+        expect(
+          (await repo.snapshot(draft)).lines
+              .any((row) => row.text('storage_name') == 'Новый конверт'),
+          isTrue,
+        );
         await tester.scrollUntilVisible(find.text('USD: 0,00'), 160);
         expect(find.text('USD: 0,00'), findsOneWidget);
         await tester.scrollUntilVisible(find.text('По местам'), 300);
@@ -277,6 +344,25 @@ void main() {
         await tester.tap(back);
         await tester.pumpAndSettle();
         expect(find.widgetWithText(AppBar, 'Главная'), findsOneWidget);
+        await tester.tap(find.widgetWithText(TextButton, 'Продолжить'));
+        await tester.pumpAndSettle();
+        final delete = find.widgetWithText(TextButton, 'Удалить черновик');
+        await tester.tap(delete);
+        await tester.pumpAndSettle();
+        expect(find.text('Удалить черновик от 18.11.2026?'), findsOneWidget);
+        expect(find.text('Введённые в нём суммы пропадут'), findsOneWidget);
+        await tester.tap(find.text('Отмена'));
+        await tester.pumpAndSettle();
+        expect(find.text('Учебный черновик'), findsOneWidget);
+        await tester.tap(delete);
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(FilledButton, 'Удалить'));
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(AppBar, 'Слепки'), findsOneWidget);
+        expect(find.textContaining('Учебный черновик'), findsNothing);
+        router.go('/');
+        await tester.pumpAndSettle();
+        expect(find.textContaining('Есть незавершённый слепок'), findsNothing);
       });
     }
   }

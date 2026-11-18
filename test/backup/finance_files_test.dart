@@ -67,6 +67,110 @@ void main() {
   });
 
   test(
+    'Удалённый черновик и поздние дочерние записи не входят в файлы',
+    () async {
+      final repo = source.repo;
+      final draft = (await repo.overview()).snapshots
+          .singleWhere((row) => row.text('status') == 'draft')
+          .id;
+      final line = (await repo.snapshot(draft)).lines.single;
+      await repo.saveLine(line.id, '0.12345678', '0.01', '');
+      await repo.saveRate(draft, line.text('currency_id'), '123456.789');
+      expect((await repo.totals(draft)).rubles.total.toString(), isNot('0'));
+      await source.setup(create: true);
+      expect(source.sync.error, isNull);
+      final beforeDelete = await readFinanceTables(repo.db);
+      await repo.db.customStatement('''
+        CREATE TEMP TRIGGER test_failed_deletion
+        BEFORE UPDATE OF deleted ON snapshot_rate WHEN NEW.deleted=1
+        BEGIN SELECT RAISE(ABORT, 'Пробный сбой'); END
+      ''');
+      await expectLater(repo.deleteDraft(draft), throwsA(isA<Exception>()));
+      expect(await readFinanceTables(repo.db), beforeDelete);
+      expect(await source.sync.journal.changes(), isEmpty);
+      await repo.db.customStatement('DROP TRIGGER test_failed_deletion');
+      await repo.deleteDraft(draft);
+      final changes = await source.sync.journal.changes();
+      expect(
+        changes.map((c) => c['table']),
+        unorderedEquals(['snapshot', 'snapshot_line', 'snapshot_rate']),
+      );
+      for (final change in changes) {
+        final row = change['row'] as Map;
+        expect(row['deleted'], 1);
+        expect(row['device_id'], repo.deviceId);
+        expect((row['updated_at'] as String).endsWith(repo.deviceId), isTrue);
+      }
+      final raw = await readFinanceTables(repo.db);
+      expect(
+        raw['snapshot']!.singleWhere((r) => r['id'] == draft)['deleted'],
+        1,
+      );
+      for (final table in ['snapshot_line', 'snapshot_rate']) {
+        expect(
+          raw[table]!.singleWhere((r) => r['snapshot_id'] == draft)['deleted'],
+          1,
+        );
+        // Состояние после более позднего изменения строки с другого устройства.
+        await repo.db.customStatement(
+          'UPDATE $table SET deleted=0 WHERE snapshot_id=?',
+          [draft],
+        );
+      }
+      expect((await repo.overview()).snapshots.map((r) => r.text('status')), [
+        'fixed',
+      ]);
+      await expectLater(
+        repo.valuation(draft, draftPreview: true),
+        throwsStateError,
+      );
+      final report = await repo.reportSnapshots();
+      expect(report.excludedDates, isEmpty);
+      expect(report.snapshots.map((r) => r.date), ['2026-11-17']);
+      expect(
+        report.snapshots.single.totals.rubles.total.toString(),
+        '66319.825',
+      );
+
+      final visible = await readFinanceTables(repo.db, includeDeleted: false);
+      for (final table in ['snapshot_line', 'snapshot_rate']) {
+        expect(
+          visible[table]!.map((r) => r['snapshot_id']),
+          isNot(contains(draft)),
+        );
+      }
+      final excel = ZipDecoder().decodeBytes(
+        await exportFinanceExcel(repo),
+        verify: true,
+      );
+      for (final sheet in [1, 2, 3]) {
+        final file = excel.findFile('xl/worksheets/sheet$sheet.xml')!;
+        final rows = XmlDocument.parse(utf8.decode(file.content as List<int>))
+            .findAllElements('row');
+        expect(rows, hasLength(2));
+        expect(rows.last.innerText, isNot(contains('Пробный черновик')));
+      }
+      final copy = FinanceCopy(target.sync);
+      final opened = await copy.open(
+        await FinanceCopy(source.sync).create(password),
+        password,
+      );
+      expect(opened.snapshots, 1);
+      expect(opened.lastSnapshot, '2026-11-17');
+      await copy.restore(opened);
+      final restored = await readFinanceTables(target.repo.db);
+      expect(restored['snapshot']!.map((r) => r['id']), isNot(contains(draft)));
+      for (final table in ['snapshot_line', 'snapshot_rate']) {
+        expect(
+          restored[table]!.map((r) => r['snapshot_id']),
+          isNot(contains(draft)),
+        );
+      }
+      expect(await target.repo.query('PRAGMA foreign_key_check'), isEmpty);
+    },
+  );
+
+  test(
     'Копия сохраняет таблицы, HLC, авторов и надгробия; нет настроек и журнала',
     () async {
       await source.setup(create: true);
