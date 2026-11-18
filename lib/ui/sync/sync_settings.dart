@@ -1,3 +1,5 @@
+import '../messages.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
@@ -20,7 +22,7 @@ class SyncSettings extends ConsumerWidget {
       .when(
         loading: () => const LinearProgressIndicator(),
         error: (_, _) =>
-            const Text('Настройки синхронизации временно недоступны.'),
+            const AppMessage('Настройки синхронизации временно недоступны.'),
         data: (service) => service == null
             ? const SizedBox.shrink()
             : ListenableBuilder(
@@ -36,9 +38,12 @@ class SyncSettings extends ConsumerWidget {
                       'Последняя синхронизация: ${service.lastSync?.toLocal().toString().split('.').first ?? 'ещё не выполнялась'}',
                     ),
                     if (service.hasPendingChanges)
-                      const Text('Есть неотправленные изменения'),
+                      const AppMessage(
+                        'Есть неотправленные изменения',
+                        kind: MessageKind.warning,
+                      ),
                     if (service.busy) const LinearProgressIndicator(),
-                    if (service.error != null) Text(service.error!),
+                    if (service.error != null) AppMessage(service.error!),
                     if (service.enabled)
                       FilledButton(
                         onPressed: service.busy ? null : service.synchronize,
@@ -157,7 +162,7 @@ class SyncSettings extends ConsumerWidget {
                         'Фраза сохранена; остальные устройства синхронизированы',
                       ),
                     ),
-                  if (error != null) Text(error!),
+                  if (error != null) AppMessage(error!),
                   if (working) const LinearProgressIndicator(),
                 ],
               ),
@@ -168,6 +173,7 @@ class SyncSettings extends ConsumerWidget {
                 child: const Text('Отмена'),
               ),
               FilledButton(
+                style: phrase ? destructiveStyle(context) : null,
                 onPressed: working || phrase && !accepted
                     ? null
                     : () async {
@@ -386,7 +392,7 @@ class _ConnectState extends State<_Connect> {
                 ),
               ),
               if (busy) const LinearProgressIndicator(),
-              if (error != null) Text(error!),
+              if (error != null) AppMessage(error!),
             ],
           ),
         ),
@@ -397,6 +403,9 @@ class _ConnectState extends State<_Connect> {
           child: const Text('Отмена'),
         ),
         FilledButton(
+          style: !widget.create && widget.hasData && replace
+              ? destructiveStyle(context)
+              : null,
           onPressed: busy || !accepted ? null : _submit,
           child: Text(widget.create ? 'Создать' : 'Подключиться'),
         ),

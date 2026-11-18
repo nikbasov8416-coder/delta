@@ -928,6 +928,17 @@ class DriftFinanceRepository implements FinanceRepository {
   }
 
   @override
+  Future<Map<String, Decimal>> currentRates(Set<String> codes) async {
+    final batch = await _obtainRates(codes, calendarDay(now()), force: false);
+    if (batch.errors.isNotEmpty) {
+      throw StateError(
+        'Сегодняшняя оценка недоступна: ${batch.errors.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
+      );
+    }
+    return {for (final quote in batch.quotes.values) quote.code: quote.value};
+  }
+
+  @override
   Future<ReportData> reportSnapshots() async {
     final result = <ReportSnapshot>[];
     final excludedDates = <String>[];

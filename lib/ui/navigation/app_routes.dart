@@ -4,5 +4,6 @@ const appScreens = <String, String>{
   '/storage': 'Места хранения',
   '/catalogs': 'Справочники',
   '/reports': 'Отчёты',
+  '/more': 'Ещё',
   '/settings': 'Настройки',
 };

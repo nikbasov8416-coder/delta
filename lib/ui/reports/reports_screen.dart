@@ -1,47 +1,13 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../domain/reports/reports.dart';
 import '../providers.dart';
+import '../messages.dart';
+import '../finance_format.dart';
 import '../money_visibility.dart';
 import 'report_chart.dart';
-
-class MiniReport extends ConsumerWidget {
-  const MiniReport({super.key});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) => ref
-      .watch(reportSnapshotsProvider)
-      .when(
-        loading: () => const LinearProgressIndicator(),
-        error: (_, _) => const Text('Динамика временно недоступна.'),
-        data: (result) => result.snapshots.isEmpty
-            ? const SizedBox.shrink()
-            : Card(
-                child: InkWell(
-                  onTap: () => context.go('/reports'),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Динамика общего итога'),
-                        IgnorePointer(
-                          child: ReportPlot(
-                            snapshots: result.snapshots,
-                            chart: ReportChart.total,
-                            mini: true,
-                          ),
-                        ),
-                        const Text('Открыть отчёты'),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-      );
-}
 
 class ReportsView extends ConsumerStatefulWidget {
   const ReportsView({super.key});
@@ -57,15 +23,16 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
       .watch(reportSnapshotsProvider)
       .when(
         loading: () => const LinearProgressIndicator(),
-        error: (_, _) => const Text(
+        error: (_, _) => const AppMessage(
           'Не удалось построить отчёт. Проверьте заполнение курсов зафиксированных слепков.',
         ),
         data: (result) {
           final all = result.snapshots;
           final warnings = [
             for (final date in result.excludedDates)
-              Text(
-                'Слепок от ${date.substring(8, 10)}.${date.substring(5, 7)}.${date.substring(0, 4)} не учтён: обновите его курсы',
+              AppMessage(
+                'Слепок от ${displayDate(date)} не учтён: обновите его курсы',
+                kind: MessageKind.warning,
               ),
           ];
           if (all.isEmpty) {

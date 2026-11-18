@@ -160,17 +160,27 @@ void main() {
       final line = chart().data.lineBarsData.first;
       final tooltip = chart().data.lineTouchData.touchTooltipData
           .getTooltipItems([LineBarSpot(line, 0, line.spots.last)]);
-      expect(tooltip.single!.text, contains('90 000 ₽'));
+      expect(tooltip.single!.text, contains('90\u00a0000,00 ₽'));
       await tester.tap(find.byTooltip('Скрыть суммы'));
       await tester.pumpAndSettle();
-      expect(chart().data.lineTouchData.enabled, isFalse);
-      expect(chart().data.titlesData.leftTitles.sideTitles.showTitles, isFalse);
+      final hiddenLine = chart().data.lineBarsData.first;
+      expect(
+        chart().data.lineTouchData.touchTooltipData
+            .getTooltipItems([
+              LineBarSpot(hiddenLine, 0, hiddenLine.spots.last),
+            ])
+            .single!
+            .text,
+        endsWith('· •••'),
+      );
+      expect(chart().data.titlesData.leftTitles.sideTitles.showTitles, isTrue);
+      expect(find.text('•••'), findsWidgets);
       expect(find.textContaining('Общая разница: •••'), findsOneWidget);
-      expect(find.textContaining('90 000'), findsNothing);
+      expect(find.textContaining('90\u00a0000'), findsNothing);
       expect(secrets.values['hide_amounts'], 'true');
       await tester.pumpWidget(app(2));
       await tester.pumpAndSettle();
-      expect(chart().data.lineTouchData.enabled, isFalse);
+      expect(find.text('•••'), findsWidgets);
       expect(find.byTooltip('Показать суммы'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -215,10 +225,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ReportPlot), findsOneWidget);
       expect(find.textContaining('20,00'), findsNothing);
-      await tester.ensureVisible(find.text('Открыть отчёты'));
-      await tester.tap(find.text('Открыть отчёты'));
+      final plotLink = find.byKey(const ValueKey('home-report-link'));
+      await tester.ensureVisible(plotLink);
+      await tester.tap(plotLink);
       await tester.pumpAndSettle();
-      expect(find.text('Delta · Отчёты'), findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Отчёты'), findsOneWidget);
       expect(find.textContaining('Графики и сравнение — этап 5'), findsNothing);
       final container = ProviderScope.containerOf(
         tester.element(find.byType(DeltaApp)),
@@ -226,8 +237,14 @@ void main() {
       container.read(appRouterProvider).go('/snapshots/$id');
       await tester.pumpAndSettle();
       expect(find.textContaining('20,00'), findsNothing);
-      await tester.scrollUntilVisible(find.byType(ExpansionTile), 400);
-      await tester.tap(find.byType(ExpansionTile).first);
+      final audit = find.widgetWithText(
+        ExpansionTile,
+        'Сумма / семейная часть / заметка',
+      );
+      await tester.scrollUntilVisible(audit, 220);
+      await Scrollable.ensureVisible(tester.element(audit), alignment: .45);
+      await tester.pumpAndSettle();
+      await tester.tap(audit);
       await tester.pumpAndSettle();
       expect(find.textContaining('Всего: ••• → •••'), findsOneWidget);
       expect(find.textContaining('10 → 20'), findsNothing);

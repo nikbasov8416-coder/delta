@@ -1,6 +1,11 @@
 import '../sync/sync_settings.dart';
 import '../money_visibility.dart';
 import '../reports/reports_screen.dart';
+import '../finance_format.dart';
+import '../messages.dart';
+import 'home_view.dart';
+
+import 'package:decimal/decimal.dart';
 
 import 'dart:io';
 import 'dart:convert';
@@ -34,10 +39,13 @@ class EditField {
     this.initial = '',
     this.options,
     this.numeric = false,
+    this.date = false,
   });
   final String key, label, initial;
   final Map<String, String>? options;
-  final bool numeric;
+  final bool numeric, date;
+  bool get amount =>
+      numeric && const ['amount', 'family', 'rate'].contains(key);
 }
 
 Future<void> editDialog(
@@ -86,7 +94,11 @@ class _EditorDialogState extends ConsumerState<_EditorDialog> {
     super.initState();
     controllers = {
       for (final field in widget.fields)
-        field.key: TextEditingController(text: field.initial),
+        field.key: TextEditingController(
+          text: field.amount
+              ? AmountInputFormatter.group(field.initial)
+              : field.initial,
+        ),
     };
     selection = {...widget.selected};
   }
@@ -103,9 +115,42 @@ class _EditorDialogState extends ConsumerState<_EditorDialog> {
             for (final field in widget.fields)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: field.options == null
+                child: field.date
+                    ? OutlinedButton.icon(
+                        icon: const Icon(Icons.calendar_today_outlined),
+                        label: AnimatedBuilder(
+                          animation: controllers[field.key]!,
+                          builder: (_, _) =>
+                              Text(displayDate(controllers[field.key]!.text)),
+                        ),
+                        onPressed: busy
+                            ? null
+                            : () async {
+                                final controller = controllers[field.key]!;
+                                final initial = DateTime.parse(controller.text);
+                                final date = await showDatePicker(
+                                  context: context,
+                                  initialDate: initial,
+                                  firstDate: DateTime(
+                                    initial.year < 1900 ? initial.year : 1900,
+                                  ),
+                                  lastDate: DateTime(
+                                    initial.year > 2200 ? initial.year : 2200,
+                                    12,
+                                    31,
+                                  ),
+                                );
+                                if (date != null && mounted) {
+                                  controller.text = dayKey(date);
+                                }
+                              },
+                      )
+                    : field.options == null
                     ? TextField(
                         controller: controllers[field.key],
+                        inputFormatters: field.amount
+                            ? const [AmountInputFormatter()]
+                            : null,
                         enabled: !busy,
                         obscureText:
                             field.numeric &&
@@ -156,11 +201,7 @@ class _EditorDialogState extends ConsumerState<_EditorDialog> {
                         }
                       }),
               ),
-            if (error != null)
-              Text(
-                error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
+            if (error != null) AppMessage(error!),
           ],
         ),
       ),
@@ -205,33 +246,88 @@ class _EditorDialogState extends ConsumerState<_EditorDialog> {
 }
 
 class FinanceScaffold extends StatelessWidget {
-  const FinanceScaffold({required this.title, required this.child, super.key});
-  final String title;
+  const FinanceScaffold({
+    required this.title,
+    required this.child,
+    required this.section,
+    this.onNewSnapshot,
+    super.key,
+  });
+  final String title, section;
   final Widget child;
+  final VoidCallback? onNewSnapshot;
+
+  static const destinations = [
+    ('/', 'Главная', Icons.home_outlined),
+    ('/snapshots', 'Слепки', Icons.account_balance_wallet_outlined),
+    ('/reports', 'Отчёты', Icons.insights_outlined),
+    ('/more', 'Ещё', Icons.more_horiz),
+  ];
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: Text('Delta · $title'),
-      actions: const [AmountsEye()],
-    ),
-    drawer: Drawer(
-      child: SafeArea(
-        child: ListView(
-          children: [
-            const DrawerHeader(child: Text('Delta')),
-            for (final e in appScreens.entries)
-              ListTile(
-                title: Text(e.value),
-                onTap: () {
-                  Navigator.pop(context);
-                  context.go(e.key);
-                },
-              ),
-          ],
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= 600;
+      final index = destinations.indexWhere((item) => item.$1 == section);
+      final selected = index == -1 ? 3 : index;
+      void navigate(int i) => context.go(destinations[i].$1);
+      final create = onNewSnapshot == null
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: onNewSnapshot,
+              icon: const Icon(Icons.add),
+              label: const Text('Новый слепок'),
+            );
+      final content = Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: section == '/reports' ? 1200 : 840,
+          ),
+          child: child,
         ),
-      ),
-    ),
-    body: child,
+      );
+      return Scaffold(
+        appBar: AppBar(title: Text(title), actions: const [AmountsEye()]),
+        bottomNavigationBar: wide
+            ? null
+            : NavigationBar(
+                selectedIndex: selected,
+                onDestinationSelected: navigate,
+                destinations: [
+                  for (final (_, label, icon) in destinations)
+                    NavigationDestination(icon: Icon(icon), label: label),
+                ],
+              ),
+        floatingActionButton: wide ? null : create,
+        body: wide
+            ? Row(
+                children: [
+                  NavigationRail(
+                    selectedIndex: selected,
+                    onDestinationSelected: navigate,
+                    groupAlignment: -1,
+                    labelType: NavigationRailLabelType.all,
+                    leading: create == null
+                        ? null
+                        : Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: create,
+                          ),
+                    destinations: [
+                      for (final (_, label, icon) in destinations)
+                        NavigationRailDestination(
+                          icon: Icon(icon),
+                          label: Text(label),
+                        ),
+                    ],
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: content),
+                ],
+              )
+            : content,
+      );
+    },
   );
 }
 
@@ -240,21 +336,38 @@ class FinanceScreen extends ConsumerWidget {
   final String section;
   @override
   Widget build(BuildContext context, WidgetRef ref) => FinanceScaffold(
+    section: section,
     title: appScreens[section] ?? 'Delta',
+    onNewSnapshot: section == '/' || section == '/snapshots'
+        ? () => _newSnapshot(context, ref)
+        : null,
     child: ref
         .watch(overviewProvider)
         .when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => Center(child: Text(friendlyError(error))),
+          error: (error, _) => Center(child: AppMessage(friendlyError(error))),
           data: (data) => ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 86),
             children: switch (section) {
               '/storage' => _storage(context, ref, data),
               '/catalogs' => _catalogs(context, ref, data),
               '/snapshots' => _snapshots(context, ref, data),
               '/settings' => [const SyncSettings(), const SecuritySettings()],
               '/reports' => [const ReportsView()],
-              _ => _home(context, ref, data),
+              '/more' => [
+                for (final path in ['/storage', '/catalogs', '/settings'])
+                  ListTile(
+                    title: Text(appScreens[path]!),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push(path),
+                  ),
+              ],
+              _ => [
+                HomeView(
+                  overview: data,
+                  onNewSnapshot: () => _newSnapshot(context, ref),
+                ),
+              ],
             },
           ),
         ),
@@ -270,7 +383,8 @@ class FinanceScreen extends ConsumerWidget {
       [
         EditField(
           'date',
-          'Дата (ГГГГ-ММ-ДД)',
+          'Дата',
+          date: true,
           initial: DateTime.now().toIso8601String().substring(0, 10),
         ),
         const EditField('note', 'Заметка'),
@@ -281,51 +395,23 @@ class FinanceScreen extends ConsumerWidget {
         refreshFinance(ref);
       },
     );
-    if (result != null && context.mounted) context.go('/snapshots/$result');
+    if (result != null && context.mounted) context.push('/snapshots/$result');
   }
 
-  List<Widget> _home(
-    BuildContext context,
-    WidgetRef ref,
-    FinanceOverview data,
-  ) => [
-    FilledButton.icon(
-      onPressed: () => _newSnapshot(context, ref),
-      icon: const Icon(Icons.add),
-      label: const Text('Новый слепок'),
-    ),
-    const SizedBox(height: 16),
-    const MiniReport(),
-    if (data.snapshots.isEmpty)
-      const Text('Добавьте места хранения, затем создайте первый слепок.'),
-    if (data.snapshots.isNotEmpty) ...[
-      Text('Последний слепок: ${data.snapshots.first.text('date')}'),
-      if (data.snapshots.first.text('status') == 'fixed')
-        TotalsView(id: data.snapshots.first.id, showCurrencyDetails: false),
-      OutlinedButton(
-        onPressed: () => context.go('/snapshots/${data.snapshots.first.id}'),
-        child: const Text('Открыть слепок'),
-      ),
-    ],
-  ];
   List<Widget> _snapshots(
     BuildContext context,
     WidgetRef ref,
     FinanceOverview data,
   ) => [
-    FilledButton(
-      onPressed: () => _newSnapshot(context, ref),
-      child: const Text('Новый слепок'),
-    ),
     for (final item in data.snapshots)
       Card(
         child: ListTile(
-          title: Text(item.text('date')),
+          title: Text(displayDate(item.text('date'))),
           subtitle: Text(
             '${item.text('status') == 'fixed' ? 'Зафиксирован' : 'Черновик'} · ${item.text('note')}',
           ),
           trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.go('/snapshots/${item.id}'),
+          onTap: () => context.push('/snapshots/${item.id}'),
         ),
       ),
   ];
@@ -336,8 +422,10 @@ class FinanceScreen extends ConsumerWidget {
     FinanceRecord? item,
   ]) async {
     if (data.liquidity.isEmpty || data.currencies.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сначала заполните справочники')),
+      AppMessage.show(
+        context,
+        'Сначала заполните справочники',
+        kind: MessageKind.warning,
       );
       return;
     }
@@ -407,9 +495,12 @@ class FinanceScreen extends ConsumerWidget {
     WidgetRef ref,
     FinanceOverview data,
   ) => [
-    FilledButton(
-      onPressed: () => _editStorage(context, ref, data),
-      child: const Text('Добавить место хранения'),
+    Align(
+      alignment: Alignment.centerLeft,
+      child: FilledButton(
+        onPressed: () => _editStorage(context, ref, data),
+        child: const Text('Добавить место хранения'),
+      ),
     ),
     for (final item in data.storages)
       Card(
@@ -513,7 +604,8 @@ class FinanceScreen extends ConsumerWidget {
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Отмена'),
           ),
-          TextButton(
+          FilledButton(
+            style: destructiveStyle(ctx),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Удалить'),
           ),
@@ -526,8 +618,7 @@ class FinanceScreen extends ConsumerWidget {
       refreshFinance(ref);
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        AppMessage.show(context, friendlyError(e));
       }
     }
   }
@@ -538,9 +629,12 @@ class FinanceScreen extends ConsumerWidget {
     FinanceOverview data,
   ) => [
     Text('Валюты', style: Theme.of(context).textTheme.titleLarge),
-    TextButton(
-      onPressed: () => _currency(context, ref),
-      child: const Text('Добавить валюту'),
+    Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton(
+        onPressed: () => _currency(context, ref),
+        child: const Text('Добавить валюту'),
+      ),
     ),
     for (final item in data.currencies)
       ListTile(
@@ -554,9 +648,12 @@ class FinanceScreen extends ConsumerWidget {
       ),
     const Divider(),
     Text('Ликвидность', style: Theme.of(context).textTheme.titleLarge),
-    TextButton(
-      onPressed: () => _liquidity(context, ref),
-      child: const Text('Добавить уровень'),
+    Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton(
+        onPressed: () => _liquidity(context, ref),
+        child: const Text('Добавить уровень'),
+      ),
     ),
     for (final item in data.liquidity)
       ListTile(
@@ -580,42 +677,63 @@ class SnapshotScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) => FinanceScaffold(
     title: 'Слепок',
+    section: '/snapshots',
     child: ref
         .watch(snapshotProvider(id))
         .when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text(friendlyError(e))),
+          error: (e, _) => Center(child: AppMessage(friendlyError(e))),
           data: (detail) => ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Text(
-                '${detail.header.text('date')} · ${detail.header.text('status') == 'fixed' ? 'Зафиксирован' : 'Черновик'}',
-                style: Theme.of(context).textTheme.titleLarge,
+              Wrap(
+                spacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    displayDate(detail.header.text('date')),
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  Chip(
+                    backgroundColor: detail.header.text('status') == 'fixed'
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : Theme.of(context).colorScheme.tertiaryContainer,
+                    label: Text(
+                      detail.header.text('status') == 'fixed'
+                          ? 'Зафиксирован'
+                          : 'Черновик',
+                    ),
+                  ),
+                ],
               ),
               Text(detail.header.text('note')),
-              TextButton(
-                onPressed: () => editDialog(
-                  context,
-                  'Дата и заметка',
-                  [
-                    EditField(
-                      'date',
-                      'Дата (ГГГГ-ММ-ДД)',
-                      initial: detail.header.text('date'),
-                    ),
-                    EditField(
-                      'note',
-                      'Заметка',
-                      initial: detail.header.text('note'),
-                    ),
-                  ],
-                  (v, _) async {
-                    await (await _repo(ref))
-                        .saveSnapshotHeader(id, v['date']!, v['note']!);
-                    refreshFinance(ref, id);
-                  },
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: () => editDialog(
+                    context,
+                    'Дата и заметка',
+                    [
+                      EditField(
+                        'date',
+                        'Дата',
+                        date: true,
+                        initial: detail.header.text('date'),
+                      ),
+                      EditField(
+                        'note',
+                        'Заметка',
+                        initial: detail.header.text('note'),
+                      ),
+                    ],
+                    (v, _) async {
+                      await (await _repo(ref))
+                          .saveSnapshotHeader(id, v['date']!, v['note']!);
+                      refreshFinance(ref, id);
+                    },
+                  ),
+                  child: const Text('Изменить дату и заметку'),
                 ),
-                child: const Text('Изменить дату и заметку'),
               ),
               Text(
                 'Заполнено ${detail.lines.where((l) => l.flag('confirmed')).length} из ${detail.lines.length}',
@@ -627,42 +745,43 @@ class SnapshotScreen extends ConsumerWidget {
                           detail.lines.length,
               ),
               if (detail.header.text('status') == 'draft')
-                TextButton(
-                  onPressed: () async {
-                    final yes = await showDialog<bool>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text(
-                          'Точно подтвердить все непроверенные?',
-                        ),
-                        content: const Text(
-                          'Подтвердятся только строки с уже заполненными суммами. Пустые строки нужно заполнить отдельно.',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            child: const Text('Отмена'),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonal(
+                    onPressed: () async {
+                      final yes = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text(
+                            'Точно подтвердить все непроверенные?',
                           ),
-                          FilledButton(
-                            onPressed: () => Navigator.pop(ctx, true),
-                            child: const Text('Да, подтвердить'),
+                          content: const Text(
+                            'Подтвердятся только строки с уже заполненными суммами. Пустые строки нужно заполнить отдельно.',
                           ),
-                        ],
-                      ),
-                    );
-                    if (yes != true) return;
-                    try {
-                      await (await _repo(ref)).confirmUnreviewed(id);
-                      refreshFinance(ref, id);
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(friendlyError(e))),
-                        );
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Отмена'),
+                            ),
+                            FilledButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Да, подтвердить'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (yes != true) return;
+                      try {
+                        await (await _repo(ref)).confirmUnreviewed(id);
+                        refreshFinance(ref, id);
+                      } catch (e) {
+                        if (context.mounted) {
+                          AppMessage.show(context, friendlyError(e));
+                        }
                       }
-                    }
-                  },
-                  child: const Text('Подтвердить все непроверенные'),
+                    },
+                    child: const Text('Подтвердить все непроверенные'),
+                  ),
                 ),
               if (detail.header.text('status') == 'fixed')
                 const Text(
@@ -696,30 +815,34 @@ class SnapshotScreen extends ConsumerWidget {
               const Text(
                 'Автоматические курсы на дату слепка. При сбое доступен ручной ввод. RUB = 1.',
               ),
-              RateRefreshButton(
-                id: id,
-                fixed: detail.header.text('status') == 'fixed',
+              Align(
+                alignment: Alignment.centerLeft,
+                child: RateRefreshButton(
+                  id: id,
+                  fixed: detail.header.text('status') == 'fixed',
+                ),
               ),
               for (final error in detail.rateErrors.entries)
-                Text('${error.key}: ${error.value}'),
+                AppMessage('${error.key}: ${error.value}'),
               for (final currencyId
                   in detail.lines.map((l) => l.text('currency_id')).toSet())
                 _rate(context, ref, detail, currencyId),
               if (detail.header.text('status') == 'draft')
-                FilledButton(
-                  onPressed: () async {
-                    try {
-                      await (await _repo(ref)).finalizeSnapshot(id);
-                      refreshFinance(ref, id);
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(friendlyError(e))),
-                        );
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton(
+                    onPressed: () async {
+                      try {
+                        await (await _repo(ref)).finalizeSnapshot(id);
+                        refreshFinance(ref, id);
+                      } catch (e) {
+                        if (context.mounted) {
+                          AppMessage.show(context, friendlyError(e));
+                        }
                       }
-                    }
-                  },
-                  child: const Text('Зафиксировать слепок'),
+                    },
+                    child: const Text('Зафиксировать слепок'),
+                  ),
                 ),
               const Divider(),
               TotalsView(id: id),
@@ -830,15 +953,19 @@ class SnapshotScreen extends ConsumerWidget {
                                   refreshFinance(ref, id);
                                 } catch (e) {
                                   if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(friendlyError(e))),
-                                    );
+                                    AppMessage.show(context, friendlyError(e));
                                   }
                                 }
                               },
                         child: const Text('✓ без изменений'),
                       ),
-                    const Icon(Icons.edit),
+                    Icon(
+                      Icons.edit,
+                      size: 18,
+                      color: detail.header.text('status') == 'fixed'
+                          ? Theme.of(context).colorScheme.outline
+                          : null,
+                    ),
                   ],
                 ),
                 onTap: () => editDialog(
@@ -882,8 +1009,10 @@ class SnapshotScreen extends ConsumerWidget {
                   };
                   if (!context.mounted) return;
                   if (options.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Все валюты уже добавлены')),
+                    AppMessage.show(
+                      context,
+                      'Все валюты уже добавлены',
+                      kind: MessageKind.warning,
                     );
                     return;
                   }
@@ -929,13 +1058,14 @@ class SnapshotScreen extends ConsumerWidget {
         ? (line.text('code') == 'RUB' ? '1' : '')
         : matches.first.text('rate');
     return ListTile(
-      title: Text(line.text('code')),
-      subtitle: Text(
+      title: Text(
         value.isEmpty
-            ? 'Введите курс'
-            : '${amountsHidden(ref) ? '•••' : value.replaceAll('.', ',')} ₽ · ${matches.isEmpty ? 'Постоянный курс' : rateSourceLabel(matches.first.text('source'))}\n${matches.isEmpty ? '' : rateRecordInfo(matches.first)}',
+            ? '${line.text('code')} · Введите курс'
+            : '${line.text('code')} ${amountsHidden(ref) ? '•••' : exactMoney(Decimal.parse(value))} ₽ · ${matches.isEmpty ? 'Постоянный курс' : rateSourceLabel(matches.first.text('source'))}',
       ),
-      trailing: line.text('code') == 'RUB' ? null : const Icon(Icons.edit),
+      trailing: matches.isEmpty
+          ? null
+          : _RateInfo(rateRecordInfo(matches.first)),
       onTap: line.text('code') == 'RUB'
           ? null
           : () => editDialog(
@@ -959,13 +1089,8 @@ class SnapshotScreen extends ConsumerWidget {
 }
 
 class TotalsView extends ConsumerStatefulWidget {
-  const TotalsView({
-    required this.id,
-    this.showCurrencyDetails = true,
-    super.key,
-  });
+  const TotalsView({required this.id, super.key});
   final String id;
-  final bool showCurrencyDetails;
   @override
   ConsumerState<TotalsView> createState() => _TotalsViewState();
 }
@@ -990,7 +1115,7 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
     final detail = ref.watch(snapshotProvider(id));
     return detail.when(
       loading: () => const LinearProgressIndicator(),
-      error: (e, _) => Text(friendlyError(e)),
+      error: (e, _) => AppMessage(friendlyError(e)),
       data: (data) {
         if (_future == null || !identical(_data, data)) {
           _data = data;
@@ -1025,72 +1150,101 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
             FutureBuilder<SnapshotValuation>(
               future: _future,
               builder: (context, state) {
-                if (state.hasError) return Text(friendlyError(state.error!));
+                if (state.hasError) {
+                  return AppMessage(friendlyError(state.error!));
+                }
                 if (!state.hasData) return const LinearProgressIndicator();
                 final totals = state.data!.totals;
-                Widget line(String label, AmountTotals value) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Text(
-                    '$label: ${visibleMoney(ref, value.total)} ₽ · семейные ${visibleMoney(ref, value.family)} ₽ · личные ${visibleMoney(ref, value.personal)} ₽',
-                  ),
-                );
+                final draft = data.header.text('status') == 'draft';
+                Widget block(
+                  String label,
+                  Iterable<(String, AmountTotals, int, Color?)> rows,
+                ) {
+                  final shown = rows
+                      .where((row) => draft || row.$2.total != Decimal.zero)
+                      .toList();
+                  if (shown.isEmpty) return const SizedBox.shrink();
+                  return Card(
+                    child: ExpansionTile(
+                      title: Text(label),
+                      children: [
+                        for (final (name, value, precision, color) in shown)
+                          _TotalRow(
+                            name,
+                            value,
+                            precision: precision,
+                            color: color,
+                          ),
+                      ],
+                    ),
+                  );
+                }
+
+                final overview = ref.watch(overviewProvider).value;
+                final colors = {
+                  for (final item
+                      in overview?.liquidity ?? const <FinanceRecord>[])
+                    item.id: Color(item.number('color')),
+                };
                 return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
                       'Итоги',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
-                    line('Всего', totals.rubles),
-                    if (widget.showCurrencyDetails) ...[
+                    _TotalRow('Всего, ₽', totals.rubles),
+                    if (_today)
                       for (final quote in state.data!.rates)
-                        Text(
-                          '${quote.code}: ${amountsHidden(ref) ? '•••' : quote.value.toString().replaceAll('.', ',')} ₽ · ${rateSourceLabel(quote.source)}${quote.cached ? ' · кэш' : ''}\nДействует / наблюдение: ${quote.effectiveAt}; получен ${quote.fetchedAt.toLocal()}',
+                        ListTile(
+                          dense: true,
+                          title: Text(
+                            '${quote.code} ${amountsHidden(ref) ? '•••' : exactMoney(quote.value)} ₽ · ${rateSourceLabel(quote.source)}',
+                          ),
+                          trailing: _RateInfo(
+                            'Действует / наблюдение: ${quote.effectiveAt}\nПолучен: ${quote.fetchedAt.toLocal()}${quote.cached ? ' · кэш' : ''}',
+                          ),
                         ),
-                      const Text('По валютам'),
+                    block('По местам', [
+                      for (final entry in totals.byStorageRubles.entries)
+                        (
+                          data.lines
+                              .firstWhere(
+                                (line) => line.text('storage_id') == entry.key,
+                              )
+                              .text('storage_name'),
+                          entry.value,
+                          2,
+                          null,
+                        ),
+                    ]),
+                    block('По валютам', [
                       for (final entry in totals.byCurrency.entries)
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${entry.key}: ${visibleMoney(ref, entry.value.total, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · семейные ${visibleMoney(ref, entry.value.family, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))} · личные ${visibleMoney(ref, entry.value.personal, precision: data.lines.firstWhere((l) => l.text('code') == entry.key).number('precision'))}',
-                            ),
-                            line(
-                              'В рублях',
-                              totals.byCurrencyRubles[entry.key]!,
-                            ),
-                          ],
+                        (
+                          entry.key,
+                          entry.value,
+                          data.lines
+                              .firstWhere(
+                                (line) => line.text('code') == entry.key,
+                              )
+                              .number('precision'),
+                          null,
                         ),
-                    ],
-                    const Divider(),
-                    const Text('По местам хранения'),
-                    for (final entry in totals.byStorageRubles.entries) ...[
-                      line(
-                        data.lines
-                            .firstWhere(
-                              (l) => l.text('storage_id') == entry.key,
-                            )
-                            .text('storage_name'),
-                        entry.value,
-                      ),
-                      for (final row in data.lines.where(
-                        (l) => l.text('storage_id') == entry.key,
-                      ))
-                        Text(
-                          '${row.text('code')}: ${visibleMoney(ref, row.decimal('amount'), precision: row.number('precision'))}',
+                    ]),
+                    block('По ликвидности', [
+                      for (final entry in totals.byLiquidityRubles.entries)
+                        (
+                          data.lines
+                              .firstWhere(
+                                (line) =>
+                                    line.text('liquidity_id') == entry.key,
+                              )
+                              .text('liquidity_name'),
+                          entry.value,
+                          2,
+                          colors[entry.key],
                         ),
-                    ],
-                    const Divider(),
-                    const Text('По ликвидности'),
-                    for (final entry in totals.byLiquidityRubles.entries)
-                      line(
-                        data.lines
-                            .firstWhere(
-                              (l) => l.text('liquidity_id') == entry.key,
-                            )
-                            .text('liquidity_name'),
-                        entry.value,
-                      ),
+                    ]),
                   ],
                 );
               },
@@ -1098,6 +1252,93 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
           ],
         );
       },
+    );
+  }
+}
+
+class _RateInfo extends StatelessWidget {
+  const _RateInfo(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: 'Сведения о курсе',
+    icon: const Icon(Icons.info_outline),
+    onPressed: () => showDialog<void>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Сведения о курсе'),
+        content: Text(text),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _TotalRow extends ConsumerWidget {
+  const _TotalRow(this.label, this.value, {this.precision = 2, this.color});
+  final String label;
+  final AmountTotals value;
+  final int precision;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final amounts = [
+      value.total,
+      value.family,
+      value.personal,
+    ].map((amount) => visibleMoney(ref, amount, precision: precision)).toList();
+    final theme = Theme.of(context);
+    final numbers = theme.textTheme.bodyMedium?.copyWith(
+      fontFeatures: [const FontFeature.tabularFigures()],
+    );
+    Widget cell(String title, String amount) => Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(title, style: theme.textTheme.labelSmall),
+        Text(amount, style: numbers, textAlign: TextAlign.end),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (color != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 5, top: 4),
+                child: Icon(Icons.circle, size: 9, color: color),
+              ),
+            Expanded(child: Text(label)),
+            const SizedBox(width: 8),
+            if (constraints.maxWidth >= 540) ...[
+              for (final (i, title) in ['Всего', 'Семейные', 'Личные'].indexed)
+                Expanded(child: cell(title, amounts[i])),
+            ] else
+              Flexible(
+                flex: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    cell('Всего', amounts[0]),
+                    Text(
+                      'сем. ${amounts[1]} · лич. ${amounts[2]}',
+                      textAlign: TextAlign.end,
+                      style: numbers?.copyWith(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1143,7 +1384,7 @@ class _SecuritySettingsState extends ConsumerState<SecuritySettings> {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      if (_loadError != null) Text(_loadError!),
+      if (_loadError != null) AppMessage(_loadError!),
       SwitchListTile(
         title: const Text('Вход по отпечатку / Windows Hello'),
         value: _enabled,
@@ -1165,9 +1406,7 @@ class _SecuritySettingsState extends ConsumerState<SecuritySettings> {
                   if (mounted) setState(() => _enabled = value);
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
+                    AppMessage.show(context, friendlyError(e));
                   }
                 }
               },
@@ -1195,10 +1434,9 @@ class _SecuritySettingsState extends ConsumerState<SecuritySettings> {
                     }
                     if (mounted) setState(() => _protected = true);
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Не удалось изменить защиту экрана'),
-                        ),
+                      AppMessage.show(
+                        context,
+                        'Не удалось изменить защиту экрана',
                       );
                     }
                   }
@@ -1225,12 +1463,9 @@ class _SecuritySettingsState extends ConsumerState<SecuritySettings> {
                     if (mounted) setState(() => _minutes = value);
                   } catch (_) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Не удалось сохранить время блокировки',
-                          ),
-                        ),
+                      AppMessage.show(
+                        context,
+                        'Не удалось сохранить время блокировки',
                       );
                     }
                   }

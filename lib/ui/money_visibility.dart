@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'providers.dart';
+import 'finance_format.dart';
+import 'messages.dart';
 
 class AmountsVisibility extends AsyncNotifier<bool> {
   @override
@@ -25,22 +27,13 @@ final amountsVisibilityProvider =
     AsyncNotifierProvider<AmountsVisibility, bool>(AmountsVisibility.new);
 bool amountsHidden(WidgetRef ref) =>
     ref.watch(amountsVisibilityProvider).asData?.value ?? true;
-String formatMoney(Decimal value, {int precision = 2}) {
-  final parts = value
-      .round(scale: precision)
-      .toStringAsFixed(precision)
-      .split('.');
-  final whole = parts[0].replaceAllMapped(
-    RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-    (m) => '${m[1]} ',
-  );
-  return parts.length == 1 ? whole : '$whole,${parts[1]}';
-}
+String formatMoney(Decimal value, {int precision = 2}) =>
+    formatDecimal(value, precision: precision, trimZeros: precision > 2);
 
 String exactMoney(Decimal value) {
   final fraction = value.toString().split('.');
   final n = fraction.length == 1 ? 0 : fraction.last.length;
-  return formatMoney(value, precision: n < 2 ? 2 : n);
+  return formatDecimal(value, precision: n < 2 ? 2 : n);
 }
 
 String visibleMoney(WidgetRef ref, Decimal value, {int precision = 2}) =>
@@ -61,12 +54,9 @@ class AmountsEye extends ConsumerWidget {
                   .read(amountsVisibilityProvider.notifier)
                   .toggle();
               if (!saved && context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Не удалось сохранить настройку. Суммы скрыты.',
-                    ),
-                  ),
+                AppMessage.show(
+                  context,
+                  'Не удалось сохранить настройку. Суммы скрыты.',
                 );
               }
             },

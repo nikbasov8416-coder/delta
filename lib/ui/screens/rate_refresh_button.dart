@@ -3,9 +3,22 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../domain/finance/records.dart';
 import '../providers.dart';
+import '../messages.dart';
+import '../finance_format.dart';
 
-String rateRecordInfo(FinanceRecord rate) =>
-    'Дата курса: ${rate.text('rate_date')}; действует / наблюдение: ${rate.text('effective_at')}; получен ${rate.text('fetched_at')}';
+String rateRecordInfo(FinanceRecord rate) {
+  String date(String field) {
+    final value = rate.text(field);
+    return DateTime.tryParse(value) == null ? '—' : displayDate(value);
+  }
+
+  final stored = rate.text('fetched_at');
+  final parsed = DateTime.tryParse(stored)?.toLocal();
+  final time = parsed == null
+      ? ''
+      : ' ${parsed.hour.toString().padLeft(2, '0')}:${parsed.minute.toString().padLeft(2, '0')}';
+  return 'Дата курса: ${date('rate_date')}\nДействует / наблюдение: ${date('effective_at')}\nПолучен: ${date('fetched_at')}$time';
+}
 
 class RateRefreshButton extends ConsumerStatefulWidget {
   const RateRefreshButton({required this.id, required this.fixed, super.key});
@@ -53,12 +66,9 @@ class _RateRefreshButtonState extends ConsumerState<RateRefreshButton> {
               if (mounted) refreshFinance(ref, widget.id);
             } catch (e) {
               if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      e is StateError ? e.message : 'Не удалось обновить курсы',
-                    ),
-                  ),
+                AppMessage.show(
+                  context,
+                  e is StateError ? e.message : 'Не удалось обновить курсы',
                 );
               }
             } finally {

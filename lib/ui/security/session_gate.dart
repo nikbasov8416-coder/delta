@@ -1,3 +1,5 @@
+import '../messages.dart';
+
 import 'dart:async';
 import 'dart:io';
 
@@ -237,13 +239,7 @@ class _SessionGateState extends ConsumerState<SessionGate>
                         ),
                         enabled: !_busy && !_loading,
                       ),
-                    if (_error != null)
-                      Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
+                    if (_error != null) AppMessage(_error!),
                     FilledButton(
                       onPressed: _busy || _loading ? null : () => _submit(),
                       child: Text(

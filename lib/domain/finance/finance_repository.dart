@@ -1,3 +1,5 @@
+import 'package:decimal/decimal.dart';
+
 import 'records.dart';
 import '../reports/reports.dart';
 import '../snapshots/snapshot_totals.dart';
@@ -51,5 +53,6 @@ abstract interface class FinanceRepository {
   Future<void> finalizeSnapshot(String id);
   Future<SnapshotTotals> totals(String id);
   Future<ReportData> reportSnapshots();
+  Future<Map<String, Decimal>> currentRates(Set<String> codes);
   Future<void> close();
 }

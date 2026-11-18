@@ -65,8 +65,13 @@ void main() {
     await tester.tap(find.text('Войти'));
     await tester.pumpAndSettle();
     expect(accessed, isTrue);
-    expect(find.text('Delta · Главная'), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.menu));
+    expect(find.widgetWithText(AppBar, 'Главная'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.text('Ещё'),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Места хранения'));
     await tester.pumpAndSettle();
@@ -117,7 +122,7 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '135790');
     await tester.tap(find.text('Войти'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Новый слепок'));
+    await tester.tap(find.byType(FloatingActionButton));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Сохранить'));
     await tester.pumpAndSettle();
@@ -133,11 +138,8 @@ void main() {
     await tester.tap(find.text('Зафиксировать слепок'));
     await tester.pumpAndSettle();
     expect((await repo.overview()).snapshots.single.text('status'), 'fixed');
-    await tester.scrollUntilVisible(
-      find.textContaining('Всего: 1 234,56 ₽'),
-      200,
-    );
-    expect(find.textContaining('личные 1 000,00 ₽'), findsWidgets);
+    await tester.scrollUntilVisible(find.text('1\u00a0234,56'), 200);
+    expect(find.text('1\u00a0000,00'), findsWidgets);
   });
   testWidgets('Кнопки подтверждения: без изменений и общий вопрос с отменой', (
     tester,
@@ -176,7 +178,7 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '135790');
     await tester.tap(find.text('Войти'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Новый слепок'));
+    await tester.tap(find.byType(FloatingActionButton));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Сохранить'));
     await tester.pumpAndSettle();
@@ -261,12 +263,12 @@ void main() {
     expect(find.text('По валютам'), findsNothing);
     expect(find.textContaining('Действует / наблюдение:'), findsNothing);
     expect(find.text('По местам хранения'), findsOneWidget);
-    expect(find.text('По ликвидности'), findsOneWidget);
-    expect(find.textContaining('Всего: 30,00 ₽'), findsOneWidget);
+    expect(find.text('Ликвидность'), findsOneWidget);
+    expect(find.text('30,00 ₽').first, findsOneWidget);
     await tester.scrollUntilVisible(find.text('По сегодняшнему'), 200);
     await tester.tap(find.text('По сегодняшнему'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Всего: 40,00 ₽'), findsOneWidget);
+    expect(find.text('40,00 ₽').first, findsOneWidget);
     expect(
       (await repo.snapshot(id)).rates.map((r) => r.values).toList(),
       before,
@@ -275,12 +277,18 @@ void main() {
     await tester.ensureVisible(find.text('По курсу слепка'));
     await tester.tap(find.text('По курсу слепка'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Всего: 30,00 ₽'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Открыть слепок'), 200);
-    await tester.tap(find.text('Открыть слепок'));
+    expect(find.text('30,00 ₽').first, findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.text('Слепки'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, '10.01.2026'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('По валютам'), 300);
     expect(find.text('По валютам'), findsOneWidget);
-    expect(find.textContaining('Действует / наблюдение:'), findsWidgets);
+    expect(find.byTooltip('Сведения о курсе'), findsWidgets);
   });
 }
