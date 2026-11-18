@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../data/default_catalog.dart';
 import '../../domain/finance/finance_repository.dart';
 import '../../domain/finance/records.dart';
 import '../../domain/snapshots/snapshot_totals.dart';
@@ -253,11 +254,13 @@ class FinanceScaffold extends StatelessWidget {
     required this.child,
     required this.section,
     this.onNewSnapshot,
+    this.leading,
     super.key,
   });
   final String title, section;
   final Widget child;
   final VoidCallback? onNewSnapshot;
+  final Widget? leading;
 
   static const destinations = [
     ('/', 'Главная', Icons.home_outlined),
@@ -289,7 +292,11 @@ class FinanceScaffold extends StatelessWidget {
         ),
       );
       return Scaffold(
-        appBar: AppBar(title: Text(title), actions: const [AmountsEye()]),
+        appBar: AppBar(
+          leading: leading,
+          title: Text(title),
+          actions: const [AmountsEye()],
+        ),
         bottomNavigationBar: wide
             ? null
             : NavigationBar(
@@ -585,13 +592,13 @@ class FinanceScreen extends ConsumerWidget {
       EditField(
         'color',
         'Цвет',
-        initial: item?.text('color') ?? '4280723098',
+        initial: item?.text('color') ?? liquidityColors.keys.first.toString(),
         options: {
-          '4280723098': 'Бирюзовый',
-          '4280391411': 'Синий',
-          '4288423856': 'Фиолетовый',
-          '4294940672': 'Оранжевый',
-          if (item != null) item.text('color'): 'Текущий цвет',
+          for (final entry in liquidityColorChoices.entries)
+            entry.key.toString(): entry.value,
+          if (item != null &&
+              !liquidityColorChoices.containsKey(item.number('color')))
+            item.text('color'): 'Текущий цвет',
         },
       ),
     ],
@@ -695,6 +702,15 @@ class SnapshotScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => FinanceScaffold(
     title: 'Слепок',
     section: '/snapshots',
+    leading: BackButton(
+      onPressed: () {
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/snapshots');
+        }
+      },
+    ),
     child: ref
         .watch(snapshotProvider(id))
         .when(
@@ -804,26 +820,7 @@ class SnapshotScreen extends ConsumerWidget {
                 const Text(
                   'Изменения сумм, курсов, даты и заметок записываются в историю.',
                 ),
-              for (final liquidity
-                  in detail.lines
-                      .map((l) => l.text('liquidity_id'))
-                      .toSet()) ...[
-                Padding(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: Text(
-                    detail.lines
-                        .firstWhere((l) => l.text('liquidity_id') == liquidity)
-                        .text('liquidity_name'),
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-                for (final storageId
-                    in detail.lines
-                        .where((l) => l.text('liquidity_id') == liquidity)
-                        .map((l) => l.text('storage_id'))
-                        .toSet())
-                  _storageCard(context, ref, detail, storageId),
-              ],
+              ..._positionGroups(context, ref, detail),
               const Divider(),
               Text(
                 'Курсы к рублю',
@@ -884,6 +881,37 @@ class SnapshotScreen extends ConsumerWidget {
           ),
         ),
   );
+  List<Widget> _positionGroups(
+    BuildContext context,
+    WidgetRef ref,
+    SnapshotDetail detail,
+  ) {
+    final draft = detail.header.text('status') == 'draft';
+    final groups = <String, Map<String, List<FinanceRecord>>>{};
+    for (final line in detail.lines) {
+      if (!draft &&
+          (line.values['amount'] == null ||
+              line.decimal('amount') == Decimal.zero)) {
+        continue;
+      }
+      final places = groups.putIfAbsent(line.text('liquidity_id'), () => {});
+      places.putIfAbsent(line.text('storage_id'), () => []).add(line);
+    }
+    return [
+      for (final places in groups.values) ...[
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: Text(
+            places.values.first.first.text('liquidity_name'),
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+        ),
+        for (final place in places.entries)
+          _storageCard(context, ref, detail, place.key, place.value),
+      ],
+    ];
+  }
+
   List<Widget> _auditChanges(
     FinanceRecord entry,
     List<FinanceRecord> lines,
@@ -952,10 +980,8 @@ class SnapshotScreen extends ConsumerWidget {
     WidgetRef ref,
     SnapshotDetail detail,
     String storageId,
+    List<FinanceRecord> lines,
   ) {
-    final lines = detail.lines
-        .where((l) => l.text('storage_id') == storageId)
-        .toList();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),

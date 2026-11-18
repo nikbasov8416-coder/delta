@@ -51,14 +51,53 @@ class ReportDates {
   }
 }
 
-String compactRubles(double value) {
-  final amount = Decimal.parse(value.toStringAsFixed(2));
-  if (value.abs() < 1000) return formatMoney(amount, precision: 0);
-  final (unit, label) = value.abs() >= 1000000
-      ? (1000000, 'млн')
-      : (1000, 'тыс');
-  final scaled = (amount / Decimal.fromInt(unit)).toDecimal();
-  return '${formatDecimal(scaled, precision: 1, trimZeros: true)} $label';
+/// Минимальный верх оси при 4–6 делениях. При равенстве ближе к пяти.
+({Decimal step, int divisions}) roundRublesAxis(double maximum) {
+  if (maximum == 0) return (step: Decimal.one, divisions: 5);
+  final high = Decimal.parse(maximum.toString());
+  final exponent = (math.log(maximum) / math.ln10).floor();
+  var bestStep = Decimal.zero;
+  var bestTop = Decimal.zero;
+  var bestDivisions = 0;
+  for (var power = exponent - 2; power <= exponent; power++) {
+    for (final factor in ['1', '2', '2.5', '5']) {
+      final step = Decimal.parse('${factor}e$power');
+      final divisions = math.max(4, (high / step).ceil().toInt());
+      if (divisions > 6) continue;
+      final top = step * Decimal.fromInt(divisions);
+      if (bestDivisions == 0 ||
+          top < bestTop ||
+          (top == bestTop &&
+              (divisions - 5).abs() < (bestDivisions - 5).abs())) {
+        bestStep = step;
+        bestTop = top;
+        bestDivisions = divisions;
+      }
+    }
+  }
+  return (step: bestStep, divisions: bestDivisions);
+}
+
+String compactRubles(Decimal amount) {
+  for (final (unit, label) in [
+    (1000000000000, 'трлн'),
+    (1000000000, 'млрд'),
+    (1000000, 'млн'),
+    (1000, 'тыс'),
+  ]) {
+    final divisor = Decimal.fromInt(unit);
+    if (amount >= divisor) {
+      final scaled = (amount / divisor).toDecimal();
+      if (scaled < Decimal.fromInt(1000) || unit != 1000000000000) {
+        return '${formatDecimal(scaled, precision: scaled.scale)} $label';
+      }
+      break;
+    }
+  }
+  if (amount.scale > 7 || amount >= Decimal.parse('1e15')) {
+    return amount.toDouble().toStringAsExponential(2).replaceFirst('.', ',');
+  }
+  return formatDecimal(amount, precision: amount.scale);
 }
 
 class ReportPlot extends ConsumerWidget {
@@ -139,10 +178,29 @@ class ReportPlot extends ConsumerWidget {
     final high = values.reduce(math.max);
     final low = mini ? values.reduce(math.min) : 0.0;
     final range = high - low;
-    final verticalStep = (high == 0 ? 1.0 : high) / 5;
+    final axis = roundRublesAxis(high);
+    final verticalStep = axis.step.toDouble();
+    final top = (axis.step * Decimal.fromInt(axis.divisions)).toDouble();
+    if (!mini && (!top.isFinite || verticalStep == 0)) {
+      return const AppMessage('Значения слишком велики или малы для графика.');
+    }
     final axisEnd = math.max(dates.positions.last, 1.0);
-    final axisWidth = hidden ? 24.0 : 52.0;
     final axisText = theme.textTheme.labelSmall;
+    final labels = [
+      for (var i = 0; i <= axis.divisions; i++)
+        hidden ? '•••' : compactRubles(axis.step * Decimal.fromInt(i)),
+    ];
+    final axisWidth =
+        labels
+            .map(
+              (label) => TextPainter.computeWidth(
+                text: TextSpan(text: label, style: axisText),
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+              ),
+            )
+            .reduce(math.max) +
+        8;
     return LayoutBuilder(
       builder: (context, constraints) {
         final ticks = dates.sparseTicks(constraints.maxWidth < 450 ? 3 : 6);
@@ -176,7 +234,7 @@ class ReportPlot extends ConsumerWidget {
                                 (range == 0
                                     ? math.max(high * 0.1, 1)
                                     : range * 0.1)
-                          : verticalStep * 5,
+                          : top,
                       borderData: FlBorderData(show: false),
                       gridData: FlGridData(
                         show: !mini,
@@ -192,8 +250,12 @@ class ReportPlot extends ConsumerWidget {
                             reservedSize: axisWidth,
                             interval: verticalStep,
                             getTitlesWidget: (value, _) => Text(
-                              hidden ? '•••' : compactRubles(value),
+                              labels[(value / verticalStep).round().clamp(
+                                0,
+                                axis.divisions,
+                              )],
                               style: axisText,
+                              softWrap: false,
                             ),
                           ),
                         ),
@@ -269,7 +331,7 @@ class ReportPlot extends ConsumerWidget {
                       children: [
                         Icon(Icons.circle, size: 10, color: color(i)),
                         const SizedBox(width: 5),
-                        Text(series[i].name),
+                        Flexible(child: Text(series[i].name)),
                       ],
                     ),
                 ],

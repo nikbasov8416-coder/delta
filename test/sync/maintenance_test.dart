@@ -194,6 +194,8 @@ void main() {
         await a.sync.synchronize();
         final before = await finances();
         disk.files['${syncRoot}old.part'] = Uint8List.fromList([1]);
+        disk.files['${syncRoot}current.fresh.part'] = Uint8List.fromList([2]);
+        disk.modified['${syncRoot}current.fresh.part'] = DateTime.now().toUtc();
         if (failure == 'upload') disk.interruptUpload = true;
         if (failure == 'pointer') disk.failReplace = '${syncRoot}current';
         if (failure == 'lost-ack') disk.loseReplaceAck = true;
@@ -209,6 +211,9 @@ void main() {
         expect(await finances(), before);
         disk.failReplace = null;
         disk.failDelete = null;
+        disk.modified['${syncRoot}old.part'] = DateTime.now().toUtc().subtract(
+          const Duration(hours: 25),
+        );
         final reopened = SyncService(
           a.repo,
           a.secrets,
@@ -228,11 +233,12 @@ void main() {
           isTrue,
         );
         expect(disk.files.containsKey('${syncRoot}old.part'), isFalse);
+        expect(disk.files.containsKey('${syncRoot}current.fresh.part'), isTrue);
         expect(disk.deleted, contains('${syncRoot}log/'));
         await b.sync.synchronize();
         expect(
           b.sync.error,
-          'Синхронизация на Диске пересоздана. Подключитесь с новой парольной фразой',
+          'Синхронизация на Диске пересоздана. Подключитесь заново — если парольную фразу меняли, введите новую',
         );
         await b.setup(passphrase: newPhrase);
         expect(b.sync.error, isNull);

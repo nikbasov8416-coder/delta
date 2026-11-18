@@ -31,6 +31,32 @@ ReportSnapshot snapshot(
 );
 
 void main() {
+  test('Ось сумм выбирает минимальный круглый верх с 4–6 делениями', () {
+    for (final (maximum, step, divisions) in [
+      (0.0, '1', 5),
+      (0.0009, '0.0002', 5),
+      (0.01, '0.002', 5),
+      (0.56, '0.1', 6),
+      (9.1, '2', 5),
+      (10.1, '2', 6),
+      (980800.0, '200000', 5),
+      (4900000.0, '1000000', 5),
+    ]) {
+      final axis = roundRublesAxis(maximum);
+      expect(axis, (
+        step: Decimal.parse(step),
+        divisions: divisions,
+      ), reason: '$maximum');
+      expect(
+        (axis.step * Decimal.fromInt(axis.divisions)).toDouble(),
+        greaterThanOrEqualTo(maximum),
+      );
+    }
+    expect(compactRubles(Decimal.fromInt(1000000)), '1\u00a0млн');
+    expect(compactRubles(Decimal.fromInt(500000)), '500\u00a0тыс');
+    expect(compactRubles(Decimal.parse('0.0002')), '0,0002');
+  });
+
   test('Формат сумм и оба варианта вставки', () {
     expect(formatMoney(Decimal.parse('1250000.5')), '1\u00a0250\u00a0000,50');
     for (final (input, expected) in [

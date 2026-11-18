@@ -1,5 +1,23 @@
 import 'package:uuid/uuid.dart';
 
+const liquidityColors = {
+  0xff28803e: 'Зелёный',
+  0xff2d73c2: 'Синий',
+  0xffb85319: 'Оранжевый',
+  0xff8654be: 'Фиолетовый',
+  0xffb7447b: 'Малиновый',
+};
+
+const liquidityColorChoices = {
+  ...liquidityColors,
+  0xff26a69a: 'Бирюзовый',
+  0xff2196f3: 'Голубой',
+  0xff9c27b0: 'Пурпурный',
+  0xffff9800: 'Янтарный',
+};
+
+int legacyLiquidityColor(int order) => 0xff26a69a + order * 0x00111111;
+
 /// Единственный источник засева и сравнения с нетронутыми справочниками.
 Map<String, Map<String, Object>> defaultCatalog(String table) {
   const uuid = Uuid();
@@ -31,12 +49,13 @@ Map<String, Map<String, Object>> defaultCatalog(String table) {
       'Инвестиции',
       'Долгосрочные (страхование)',
     ];
+    final colors = liquidityColors.keys.toList();
     return {
       for (var i = 0; i < names.length; i++)
         uuid.v5(Namespace.url.value, 'delta/liquidity/$i'): {
           'name': names[i],
           'sort_order': i,
-          'color': 0xff26a69a + i * 0x00111111,
+          'color': colors[i],
           'deleted': 0,
         },
     };

@@ -640,6 +640,30 @@ void main() {
     expect(await a.sync.hasLocalData(), isTrue);
   });
 
+  test('Старые заводские цвета не считаются правкой, пользовательский цвет считается', () async {
+    expect(await a.sync.hasLocalData(), isFalse);
+    for (final level in (await a.repo.overview()).liquidity) {
+      final order = level.number('sort_order');
+      await a.repo.saveLiquidity(
+        id: level.id,
+        name: level.text('name'),
+        order: order,
+        color: 0xff26a69a + order * 0x00111111,
+      );
+    }
+    expect(await a.sync.hasLocalData(), isFalse);
+    await a.repo.initialize();
+    expect(await a.sync.hasLocalData(), isFalse);
+    final level = (await a.repo.overview()).liquidity.first;
+    await a.repo.saveLiquidity(
+      id: level.id,
+      name: level.text('name'),
+      order: level.number('sort_order'),
+      color: 0xff37b7ab, // Заводской цвет другого уровня.
+    );
+    expect(await a.sync.hasLocalData(), isTrue);
+  });
+
   test('Изменённые, добавленные и удалённые справочники считаются пользовательскими данными', () async {
     final catalog = await a.repo.overview();
     final level = catalog.liquidity.first;

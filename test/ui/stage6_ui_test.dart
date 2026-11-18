@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:delta/data/default_catalog.dart';
 import 'package:delta/ui/delta_theme.dart';
 import 'package:delta/ui/file_dialogs.dart';
 import 'package:delta/ui/messages.dart';
@@ -47,10 +48,15 @@ void main() {
         final btc = catalog.currencies
             .singleWhere((record) => record.text('code') == 'BTC')
             .id;
+        final usd = catalog.currencies
+            .singleWhere((row) => row.text('code') == 'USD')
+            .id;
         for (final (i, name) in [
           'Копилка',
           'Вклад',
           'Кошелёк',
+          'Пробный портфель',
+          'Полис',
           'Нулевое место',
         ].indexed) {
           await repo.saveStorage(
@@ -60,10 +66,9 @@ void main() {
             organization: '',
             note: '',
             archived: false,
-            currencyIds: [i == 2 ? btc : rub],
+            currencyIds: [i == 2 ? btc : rub, if (i == 0) usd],
           );
         }
-        String? last;
         for (final (i, date) in [
           '2026-08-06',
           '2026-09-15',
@@ -77,21 +82,28 @@ void main() {
           );
           for (final line in (await repo.snapshot(id)).lines) {
             final amount = switch (line.text('storage_name')) {
-              'Копилка' => i == 3 ? '950000.74' : '${350000 + i * 38000}.74',
-              'Вклад' => '${980000 + i * 98000}.44',
+              'Копилка' =>
+                line.text('code') == 'USD'
+                    ? '0'
+                    : i == 3
+                    ? '950000.74'
+                    : '${350000 + i * 38000}.74',
+              'Вклад' => '${680000 + i * 98000}.44',
+              'Пробный портфель' => '175000',
+              'Полис' => '125000',
               'Кошелёк' => '0.41234567',
               _ => '0',
             };
             final family = line.text('code') == 'BTC'
                 ? '0.1'
-                : amount == '0'
+                : ['0', '125000', '175000'].contains(amount)
                 ? '0'
                 : '130000';
             await repo.saveLine(line.id, amount, family, '');
           }
           await repo.saveRate(id, btc, '6500000');
+          await repo.saveRate(id, usd, '92.15');
           await repo.finalizeSnapshot(id);
-          last = id;
         }
         final key = GlobalKey();
         final theme = deltaTheme(brightness);
@@ -165,13 +177,32 @@ void main() {
         expect(find.textContaining('4\u00a0554\u00a0248,04'), findsNothing);
         await tester.tap(find.byTooltip('Показать суммы'));
         await tester.pumpAndSettle();
-        router.go('/snapshots/$last');
+        router.go('/snapshots');
         await tester.pumpAndSettle();
+        await tester.tap(
+          find.widgetWithText(ListTile, 'Зафиксирован · Учебный слепок'),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Учебный слепок'), findsOneWidget);
         expect(find.text('Зафиксирован'), findsOneWidget);
+        expect(find.text('Нулевое место'), findsNothing);
+        expect(find.text('USD: 0,00'), findsNothing);
+        expect(find.textContaining('RUB: 502'), findsOneWidget);
+        final back = find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byType(BackButton),
+        );
+        expect(back, findsOneWidget);
         await save('snapshot');
+        await tester.tap(back);
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(AppBar, 'Слепки'), findsOneWidget);
         router.go('/reports');
         await tester.pumpAndSettle();
         await save('reports');
+        final millions = find.text('1\u00a0млн');
+        expect(millions, findsWidgets);
+        expect(tester.widget<Text>(millions.first).softWrap, isFalse);
         final navigation = find.byType(
           width < 600 ? NavigationBar : NavigationRail,
         );
@@ -196,9 +227,12 @@ void main() {
         }
         final draft = await repo.createSnapshot('2026-11-18', '');
         await repo.saveRate(draft, btc, '6500000');
+        await repo.saveRate(draft, usd, '92.15');
         router.go('/snapshots/$draft');
         await tester.pumpAndSettle();
         expect(find.text('Черновик'), findsOneWidget);
+        await tester.scrollUntilVisible(find.text('USD: 0,00'), 160);
+        expect(find.text('USD: 0,00'), findsOneWidget);
         await tester.scrollUntilVisible(find.text('По местам'), 300);
         await Scrollable.ensureVisible(
           tester.element(find.text('По местам')),
@@ -221,9 +255,33 @@ void main() {
           find.textContaining('Есть незавершённый слепок от 18.11'),
           findsOneWidget,
         );
+        await tester.tap(find.widgetWithText(TextButton, 'Продолжить'));
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(AppBar, 'Слепок'), findsOneWidget);
+        await tester.tap(back);
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(AppBar, 'Главная'), findsOneWidget);
       });
     }
   }
+
+  test('Цвета ликвидности контрастируют с фоном в обеих темах', () {
+    expect(liquidityColors.length, 5);
+    for (final key in liquidityColors.keys) {
+      final color = Color(key);
+      expect(color, isNot(anyOf(familyColor, personalColor)));
+      for (final brightness in Brightness.values) {
+        final surface = deltaTheme(brightness).colorScheme.surface;
+        final a = color.computeLuminance(), b = surface.computeLuminance();
+        final contrast = a > b ? (a + .05) / (b + .05) : (b + .05) / (a + .05);
+        expect(
+          contrast,
+          greaterThanOrEqualTo(3),
+          reason: '${brightness.name}: $color',
+        );
+      }
+    }
+  });
 
   test('Контраст текста и кнопок выдерживает WCAG AA в обеих темах', () {
     double contrast(Color a, Color b) {

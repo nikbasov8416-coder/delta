@@ -79,40 +79,81 @@ void main() {
     );
   });
 
-  test('Полный обмен убирает только старые .part в своём наборе и считает готовые пачки', () async {
-    final pointer =
-        jsonDecode(utf8.decode(disk.files['${syncRoot}current']!)) as Map;
-    final base = '${syncRoot}sets/${pointer['dataset']}/';
-    final bin = disk.files.keys.singleWhere((name) => name.endsWith('.bin'));
-    final stale = '$bin.old.part';
-    final fresh = '$bin.fresh.part';
-    final broken = '$bin.error.part';
-    final top = '${base}meta.old.part';
-    const other = '${syncRoot}sets/other/meta.part';
-    for (final path in [stale, fresh, broken, top, other]) {
-      disk.files[path] = Uint8List.fromList([4, 5, 6]);
-      disk.modified[path] = path == fresh
-          ? DateTime.utc(2026, 11, 17, 12)
-          : DateTime.utc(2026, 11, 17, 11, 59);
-    }
-    disk.failDelete = broken;
-    await a.sync.synchronize(uploadOnly: true);
-    expect(disk.deleted, isEmpty);
-    await a.sync.synchronize();
-    expect(a.sync.error, isNull);
-    expect(disk.deleted, unorderedEquals([stale, top]));
-    expect(disk.files.keys, containsAll([fresh, broken, other, bin]));
-    expect(a.sync.journalStats, (files: 1, bytes: disk.files[bin]!.length));
-    await a.sync.load();
-    expect(a.sync.journalStats, (files: 1, bytes: disk.files[bin]!.length));
-  });
+  test(
+    'Полный обмен убирает старые .part в своём наборе и общем корне',
+    () async {
+      final pointer =
+          jsonDecode(utf8.decode(disk.files['${syncRoot}current']!)) as Map;
+      final base = '${syncRoot}sets/${pointer['dataset']}/';
+      final bin = disk.files.keys.singleWhere((name) => name.endsWith('.bin'));
+      final stale = '$bin.old.part';
+      final fresh = '$bin.fresh.part';
+      final broken = '$bin.error.part';
+      final top = '${base}meta.old.part';
+      const oldCurrent = '${syncRoot}current.abandoned.part';
+      const oldMeta = '${syncRoot}meta.abandoned.part';
+      const freshCurrent = '${syncRoot}current.in-progress.part';
+      const missingTime = '${syncRoot}meta.unknown-age.part';
+      const other = '${syncRoot}sets/other/meta.part';
+      const rootDirectory = '${syncRoot}directory.part/';
+      await disk.mkdir(rootDirectory);
+      disk.modified[rootDirectory.substring(0, rootDirectory.length - 1)] =
+          DateTime.utc(2026, 11, 16);
+      disk.files[missingTime] = Uint8List.fromList([4, 5, 6]);
+      for (final path in [
+        stale,
+        fresh,
+        broken,
+        top,
+        oldCurrent,
+        oldMeta,
+        freshCurrent,
+        other,
+      ]) {
+        disk.files[path] = Uint8List.fromList([4, 5, 6]);
+        disk.modified[path] = path == fresh || path == freshCurrent
+            ? DateTime.utc(2026, 11, 17, 12)
+            : DateTime.utc(2026, 11, 17, 11, 59);
+      }
+      disk.failDelete = broken;
+      await a.sync.synchronize(uploadOnly: true);
+      expect(disk.deleted, isEmpty);
+      await a.sync.synchronize();
+      expect(a.sync.error, isNull);
+      expect(disk.deleted, unorderedEquals([stale, top, oldCurrent, oldMeta]));
+      expect(
+        disk.files.keys,
+        containsAll([
+          fresh,
+          broken,
+          other,
+          bin,
+          freshCurrent,
+          missingTime,
+          '${syncRoot}current',
+          '${syncRoot}meta',
+          '${base}meta',
+        ]),
+      );
+      expect(a.sync.journalStats, (files: 1, bytes: disk.files[bin]!.length));
+      expect(disk.folders, contains(rootDirectory));
+      const failedRoot = '${syncRoot}current.error.part';
+      disk.files[failedRoot] = Uint8List.fromList([4, 5, 6]);
+      disk.modified[failedRoot] = DateTime.utc(2026, 11, 16);
+      disk.failDelete = failedRoot;
+      await a.sync.synchronize();
+      expect(a.sync.error, isNull);
+      expect(disk.files.keys, contains(failedRoot));
+      await a.sync.load();
+      expect(a.sync.journalStats, (files: 1, bytes: disk.files[bin]!.length));
+    },
+  );
 
   test(
     'Замена данными отключённого устройства пересобирает журнал без слияния',
     () async {
       await addPlace(a, 'Старое место на Диске');
       await a.sync.synchronize();
-      await a.sync.disconnect();
       await addPlace(b, 'Восстановленное место');
       await b.sync.configure(
         token: syntheticToken,
@@ -122,6 +163,11 @@ void main() {
       );
       expect(b.sync.error, isNull);
       expect(b.sync.replacingDisk, isFalse);
+      await a.sync.synchronize();
+      expect(
+        a.sync.error,
+        'Синхронизация на Диске пересоздана. Подключитесь заново — если парольную фразу меняли, введите новую',
+      );
       await a.setup();
       expect(a.sync.error, isNull);
       expect(

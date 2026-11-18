@@ -468,14 +468,7 @@ class SyncService extends ChangeNotifier {
     final base = _layout(meta);
     final devices = await disk.listEntries('${base}log/');
     if (maintenance && meta['format'] == 2) {
-      try {
-        await _removeStaleParts(disk, base, await disk.listEntries(base));
-      } catch (_) {
-        developer.log(
-          'Не удалось проверить временные файлы набора.',
-          name: 'delta.sync',
-        );
-      }
+      await _cleanListedParts(disk, base);
       await _removeStaleParts(disk, '${base}log/', devices);
     }
     for (final deviceEntry in devices) {
@@ -538,6 +531,17 @@ class SyncService extends ChangeNotifier {
     return result;
   }
 
+  Future<void> _cleanListedParts(SyncDisk disk, String folder) async {
+    try {
+      await _removeStaleParts(disk, folder, await disk.listEntries(folder));
+    } catch (_) {
+      developer.log(
+        'Не удалось проверить временные файлы журнала.',
+        name: 'delta.sync',
+      );
+    }
+  }
+
   Future<void> _removeStaleParts(
     SyncDisk disk,
     String folder,
@@ -547,7 +551,7 @@ class SyncService extends ChangeNotifier {
     for (final entry in entries) {
       if (_closed) return;
       if (entry.directory ||
-          !RegExp(r'^[a-zA-Z0-9._-]+\.part$').hasMatch(entry.name) ||
+          !RegExp(r'^[a-zA-Z0-9._-]*\.part$').hasMatch(entry.name) ||
           entry.modified?.isBefore(cutoff) != true) {
         continue;
       }
@@ -606,9 +610,7 @@ class SyncService extends ChangeNotifier {
     final active = await _active(disk);
     if (active != null && active.meta['dataset'] != _dataset) {
       if (active.meta['format'] == 2) {
-        throw const SyncFailure(
-          'Синхронизация на Диске пересоздана. Подключитесь с новой парольной фразой',
-        );
+        throw const SyncFailure(syncRecreatedMessage);
       }
       throw const SyncFailure(
         'На Диске другая синхронизация. Подключитесь заново.',
@@ -641,6 +643,7 @@ class SyncService extends ChangeNotifier {
         'Локальная настройка синхронизации не совпала. Подключитесь заново.',
       );
     }
+    if (!uploadOnly) await _cleanListedParts(disk, syncRoot);
     final remote = uploadOnly
         ? null
         : await _download(disk, crypto, _meta!, maintenance: true);

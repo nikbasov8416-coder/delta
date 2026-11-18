@@ -171,10 +171,6 @@ extension SyncMaintenance on SyncService {
         'chunks': chunks,
         'uploaded': 0,
         'phase': 'uploading',
-        'parts': [
-          for (final name in await disk.list(_base))
-            if (name.endsWith('.part')) '$_base$name',
-        ],
       };
       await journal.set('rotation_plan', jsonEncode(plan));
     } else {
@@ -184,9 +180,7 @@ extension SyncMaintenance on SyncService {
     var active = await _active(disk);
     final isNew = active?.meta['dataset'] == meta['dataset'];
     if (!isNew && active?.meta['dataset'] != plan['oldDataset']) {
-      throw const SyncFailure(
-        'Синхронизация на Диске пересоздана. Подключитесь с новой парольной фразой',
-      );
+      throw const SyncFailure(syncRecreatedMessage);
     }
     if (!isNew) {
       await disk.mkdir('${syncRoot}sets/');
@@ -255,9 +249,6 @@ extension SyncMaintenance on SyncService {
       await disk.delete('${syncRoot}log/');
     } else {
       await disk.delete(plan['oldBase'] as String);
-    }
-    for (final path in (plan['parts'] as List).cast<String>()) {
-      await disk.delete(path);
     }
     _credentials.remove('rotation');
     await secrets.write(SyncService.credentialsKey, jsonEncode(_credentials));

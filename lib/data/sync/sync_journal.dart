@@ -108,7 +108,14 @@ class SyncJournal {
         // HLC и автор засева различаются между устройствами. Сравниваем значения;
         // пользовательские записи и надгробия тоже требуют предупреждения.
         if (original == null ||
-            original.entries.any((e) => row.data[e.key] != e.value)) {
+            original.entries.any((e) {
+              if (row.data[e.key] == e.value) return false;
+              // Старый засев отличался только цветом уровня.
+              return table != 'liquidity_level' ||
+                  e.key != 'color' ||
+                  row.data['color'] !=
+                      legacyLiquidityColor(original['sort_order']! as int);
+            })) {
           return true;
         }
       }
