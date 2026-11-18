@@ -7,6 +7,7 @@ import 'package:delta/ui/file_dialogs.dart';
 import 'package:delta/ui/messages.dart';
 import 'package:delta/ui/navigation/app_router.dart';
 import 'package:delta/ui/providers.dart';
+import 'package:delta/ui/theme_settings.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -114,7 +115,11 @@ void main() {
               applicationVersionProvider.overrideWith(
                 (ref) async => 'Версия 0.1.0 (сборка 17)',
               ),
-              secretStoreProvider.overrideWithValue(MemorySecrets()),
+              secretStoreProvider.overrideWithValue(
+                MemorySecrets()
+                  ..values[ThemeSettingsController.storageKey] =
+                      brightness.name,
+              ),
             ],
             child: Consumer(
               builder: (context, ref, child) => RepaintBoundary(
@@ -221,6 +226,17 @@ void main() {
           await tester.tap(find.widgetWithText(ListTile, page));
           await tester.pumpAndSettle();
           expect(find.widgetWithText(AppBar, page), findsOneWidget);
+          if (page == 'Настройки') {
+            expect(find.text('Оформление'), findsOneWidget);
+            final theme = tester.widget<DropdownButton<ThemeMode>>(
+              find.byType(DropdownButton<ThemeMode>),
+            );
+            expect(
+              theme.value,
+              brightness == Brightness.dark ? ThemeMode.dark : ThemeMode.light,
+            );
+            await save('settings');
+          }
           await tester.tap(find.byType(BackButton));
           await tester.pumpAndSettle();
           expect(find.widgetWithText(AppBar, 'Ещё'), findsOneWidget);

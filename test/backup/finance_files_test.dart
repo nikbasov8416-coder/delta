@@ -70,6 +70,7 @@ void main() {
     'Копия сохраняет таблицы, HLC, авторов и надгробия; нет настроек и журнала',
     () async {
       await source.setup(create: true);
+      source.secrets.values['theme_mode'] = 'dark';
       final tables = await readFinanceTables(source.repo.db);
       expect(
         tables['liquidity_level']!.any((row) => row['deleted'] == 1),
@@ -233,15 +234,141 @@ BEGIN SELECT RAISE(ABORT, 'test rollback'); END
       final snapshots = xml('xl/worksheets/sheet1.xml');
       expect(cell(snapshots, 'A2').getAttribute('s'), '1');
       expect(cell(snapshots, 'A2').innerText, matches(r'^\d+$'));
-      expect(cell(snapshots, 'C2').innerText, '=2+2 & <тест>');
-      expect(cell(snapshots, 'C2').getAttribute('t'), 'inlineStr');
-      expect(cell(snapshots, 'B3').innerText, 'черновик');
+      expect(cell(snapshots, 'D2').innerText, '=2+2 & <тест>');
+      expect(cell(snapshots, 'D2').getAttribute('t'), 'inlineStr');
+      expect(cell(snapshots, 'C3').innerText, 'черновик');
       final balances = xml('xl/worksheets/sheet2.xml');
-      expect(cell(balances, 'E2').getAttribute('t'), isNull);
-      expect(cell(balances, 'E2').getAttribute('s'), '10');
-      expect(cell(balances, 'E2').innerText, '0.01020305');
-      expect(cell(balances, 'F2').innerText, '0.00000001');
+      expect(cell(balances, 'G2').getAttribute('t'), isNull);
+      expect(cell(balances, 'G2').getAttribute('s'), '10');
+      expect(cell(balances, 'G2').innerText, '0.01020305');
+      expect(cell(balances, 'H2').innerText, '0.00000001');
       expect(zip.files.every((file) => !file.name.contains('vba')), isTrue);
+    },
+  );
+
+  test(
+    'XLSX сохраняет подписи одноимённых дат, заметки и точные курсы',
+    () async {
+      final repo = source.repo;
+      final currencies = (await repo.overview()).currencies;
+      final usd = currencies.singleWhere((row) => row.text('code') == 'USD').id;
+      final btc = currencies.singleWhere((row) => row.text('code') == 'BTC').id;
+      const date = '2026-11-17';
+      final first = (await repo.overview()).snapshots
+          .singleWhere((row) => row.text('date') == date)
+          .id;
+      final place = (await repo.overview()).storages.single;
+      Future<void> stamp(String id, String time) => repo.db.customStatement(
+        'UPDATE snapshot SET created_at=? WHERE id=?',
+        ['2026-11-17T${time}Z', id],
+      );
+      await stamp(first, '08:00:00.000');
+      // Разный порядок вставки, одна секунда и необязательные микросекунды.
+      final registrations = [
+        ('Поздний слепок', '12:00:00.000001', '92.4567', '150000.123456789'),
+        ('Дневной слепок', '12:00:00.000', '91.5', '140000.12345678'),
+      ];
+      final storedRates = <(String, String), String>{};
+      for (final (note, time, dollar, bitcoin) in registrations) {
+        final id = await repo.createSnapshot(date, note);
+        await stamp(id, time);
+        final detail = await repo.snapshot(id);
+        if (!detail.lines.any((line) => line.text('currency_id') == usd)) {
+          await repo.addSnapshotCurrency(id, place.id, usd);
+        }
+        for (final line in (await repo.snapshot(id)).lines) {
+          await repo.saveLine(line.id, '1', '0', '');
+        }
+        await repo.saveRate(id, usd, dollar);
+        await repo.saveRate(id, btc, bitcoin);
+        await repo.finalizeSnapshot(id);
+        final detailAfter = await repo.snapshot(id);
+        for (final (code, expected) in [('USD', dollar), ('BTC', bitcoin)]) {
+          final stored = detailAfter.rates
+              .singleWhere((row) => row.text('code') == code)
+              .text('rate');
+          expect(stored, expected);
+          storedRates[(note, code)] = stored;
+        }
+      }
+
+      final bytes = await exportFinanceExcel(repo);
+      if (const bool.fromEnvironment('DELTA_SAVE_TEST_XLSX')) {
+        await File('../tmp/delta-final-export.xlsx').writeAsBytes(bytes);
+      }
+      final zip = ZipDecoder().decodeBytes(bytes, verify: true);
+      XmlDocument xml(String file) => XmlDocument.parse(
+        utf8.decode(zip.findFile(file)!.content as List<int>),
+      );
+      final styles = xml('xl/styles.xml');
+      final xfs = styles
+          .findAllElements('cellXfs')
+          .single
+          .findElements('xf')
+          .toList();
+      final numberFormats = {
+        for (final node in styles.findAllElements('numFmt'))
+          node.getAttribute('numFmtId'): node.getAttribute('formatCode')!,
+      };
+      for (final i in [1, 2, 3]) {
+        final sheet = xml('xl/worksheets/sheet$i.xml');
+        final rows = sheet.findAllElements('row').toList();
+        final columns = {
+          for (final cell in rows.first.findElements('c'))
+            cell.innerText: cell
+                .getAttribute('r')!
+                .replaceAll(RegExp(r'\d'), ''),
+        };
+        expect(columns['Слепок'], 'B');
+        final notes = i == 1 ? 'Заметка' : 'Заметка слепка';
+        expect(columns, contains(notes));
+        final labels = <String>{};
+        final observedRates = <(String, String)>{};
+        if (i != 1) {
+          final index = columns['Курс']!.codeUnitAt(0) - 'A'.codeUnitAt(0) + 1;
+          final width = sheet
+              .findAllElements('col')
+              .singleWhere((col) => col.getAttribute('min') == '$index')
+              .getAttribute('width')!;
+          expect(int.parse(width), greaterThanOrEqualTo(17));
+        }
+        for (final row in rows.skip(1)) {
+          final cells = {
+            for (final cell in row.findElements('c'))
+              cell.getAttribute('r')!.replaceAll(RegExp(r'\d'), ''): cell,
+          };
+          final label = cells[columns['Слепок']]!.innerText;
+          labels.add(label);
+          final note = switch (label) {
+            '17.11.2026' => '=2+2 & <тест>',
+            '17.11.2026 (2)' => 'Дневной слепок',
+            '17.11.2026 (3)' => 'Поздний слепок',
+            _ => null,
+          };
+          if (note == null) continue;
+          expect(cells[columns[notes]]!.innerText, note);
+          final code = cells[columns['Валюта']]?.innerText;
+          if (code == null || label == '17.11.2026') continue;
+          final stored = storedRates[(note, code)]!;
+          observedRates.add((note, code));
+          final cell = cells[columns['Курс']]!;
+          expect(cell.getAttribute('t'), isNull);
+          expect(cell.findElements('v').single.innerText, stored);
+          final xf = xfs[int.parse(cell.getAttribute('s')!)];
+          final format = numberFormats[xf.getAttribute('numFmtId')]!;
+          expect(format, matches(r'^#,##0\.00#+$'));
+          expect(
+            format.split('.').last.length,
+            greaterThanOrEqualTo(stored.split('.').last.length),
+          );
+        }
+        if (i != 1) expect(observedRates, unorderedEquals(storedRates.keys));
+        expect(labels.take(3), [
+          '17.11.2026',
+          '17.11.2026 (2)',
+          '17.11.2026 (3)',
+        ]);
+      }
     },
   );
 }

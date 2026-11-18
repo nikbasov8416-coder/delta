@@ -178,7 +178,7 @@ class _DataFilesViewState extends ConsumerState<DataFilesView> {
                       ),
                       if (service.hasConfiguration)
                         AppMessage(
-                          'Сначала отключите синхронизацию на этом устройстве',
+                          'Чтобы восстановить из файла, сначала отключите синхронизацию на этом устройстве',
                           kind: MessageKind.warning,
                           action: TextButton(
                             onPressed: () => context.push('/settings'),

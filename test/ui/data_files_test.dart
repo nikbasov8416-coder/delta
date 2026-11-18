@@ -65,7 +65,13 @@ void main() {
       await tester.pumpWidget(screen(const DataFilesView(export: false)));
       await tester.pumpAndSettle();
       expect(
-        find.text('Сначала отключите синхронизацию на этом устройстве'),
+        find.text(
+          'Чтобы восстановить из файла, сначала отключите синхронизацию на этом устройстве',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(TextButton, 'Настройки синхронизации'),
         findsOneWidget,
       );
       expect(

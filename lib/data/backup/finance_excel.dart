@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -15,6 +16,11 @@ typedef _Number = ({Decimal value, int precision});
 _Number _number(Decimal amount, int precision) =>
     (value: amount, precision: precision);
 Decimal _decimal(Object value) => Decimal.parse(value as String);
+
+int _createdAt(Map<String, Object?> snapshot) =>
+    DateTime.tryParse(snapshot['created_at']! as String)
+        ?.microsecondsSinceEpoch ??
+    0;
 
 Future<Uint8List> exportFinanceExcel(DriftFinanceRepository repository) async {
   final (tables, fixed) = await repository.db.transaction(
@@ -54,11 +60,21 @@ Future<Uint8List> exportFinanceExcel(DriftFinanceRepository repository) async {
     }
   }
   final snapshotRows = <_Row>[
-    ['Дата', 'Статус', 'Заметка', 'Итог, ₽', 'Семейные, ₽', 'Личные, ₽'],
+    [
+      'Дата',
+      'Слепок',
+      'Статус',
+      'Заметка',
+      'Итог, ₽',
+      'Семейные, ₽',
+      'Личные, ₽',
+    ],
   ];
   final balanceRows = <_Row>[
     [
       'Дата слепка',
+      'Слепок',
+      'Заметка слепка',
       'Место',
       'Ликвидность',
       'Валюта',
@@ -70,18 +86,37 @@ Future<Uint8List> exportFinanceExcel(DriftFinanceRepository repository) async {
     ],
   ];
   final rateRows = <_Row>[
-    ['Дата слепка', 'Валюта', 'Курс', 'Источник', 'Дата действия'],
+    [
+      'Дата слепка',
+      'Слепок',
+      'Заметка слепка',
+      'Валюта',
+      'Курс',
+      'Источник',
+      'Дата действия',
+    ],
   ];
   final snapshots = tables['snapshot']!
     ..sort((a, b) {
       final date = (a['date']! as String).compareTo(b['date']! as String);
-      return date == 0
-          ? (a['created_at']! as String).compareTo(b['created_at']! as String)
-          : date;
+      if (date != 0) return date;
+      final created = _createdAt(a).compareTo(_createdAt(b));
+      return created != 0
+          ? created
+          : (a['id']! as String).compareTo(b['id']! as String);
     });
+  final countsByDate = <String, int>{};
   for (final snapshot in snapshots) {
     final id = snapshot['id'], date = snapshot['date']! as String;
     final day = DateTime.parse(date);
+    final ordinal = countsByDate.update(
+      date,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    final displayDate = date.split('-').reversed.join('.');
+    final label = ordinal == 1 ? displayDate : '$displayDate ($ordinal)';
+    final note = snapshot['note'];
     final draft = snapshot['status'] == 'draft';
     var complete = true;
     var sum = Decimal.zero, familySum = Decimal.zero;
@@ -111,13 +146,15 @@ Future<Uint8List> exportFinanceExcel(DriftFinanceRepository repository) async {
       }
       balanceRows.add([
         day,
+        label,
+        note,
         place['name'],
         levels[place['liquidity_id']]?['name'],
         code,
         if (amount == null) null else _number(amount, precision),
         _number(family, precision),
         if (amount == null) null else _number(amount - family, precision),
-        if (rate == null) null else _number(rate, rate.scale.clamp(2, 18)),
+        rate,
         if (rubles == null) null else _number(rubles, 2),
       ]);
     }
@@ -125,8 +162,9 @@ Future<Uint8List> exportFinanceExcel(DriftFinanceRepository repository) async {
     final family = draft && complete ? familySum : totals[id]?.family;
     snapshotRows.add([
       day,
+      label,
       draft ? 'черновик' : 'зафиксирован',
-      snapshot['note'],
+      note,
       if (total == null) null else _number(total, 2),
       if (family == null) null else _number(family, 2),
       if (total == null || family == null) null else _number(total - family, 2),
@@ -137,8 +175,10 @@ Future<Uint8List> exportFinanceExcel(DriftFinanceRepository repository) async {
       final amount = _decimal(rate['rate']!);
       rateRows.add([
         day,
+        label,
+        note,
         code,
-        _number(amount, amount.scale.clamp(2, 18)),
+        amount,
         rateSourceLabel(rate['source']! as String),
         DateTime.tryParse(rate['effective_at']! as String),
       ]);
@@ -175,6 +215,9 @@ Future<Uint8List> exportFinanceExcel(DriftFinanceRepository repository) async {
   return _writeWorkbook(sheets);
 }
 
+// Индексы 0 и 1 соответствуют общему формату и дате, дальше идут суммы.
+const _amountFormats = 19;
+const _rateStyle = 2 + _amountFormats;
 const _main = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const _relationships =
     'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -186,13 +229,47 @@ String _escape(String value) => value
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
 
+// Ячейки с датой, подписью и курсом помещаются по ширине сразу после открытия.
+String _sheetColumns(List<_Row> rows) {
+  int rateWidth(int column) {
+    var width = 14;
+    for (final row in rows.skip(1)) {
+      final cell = row[column];
+      if (cell is! Decimal) continue;
+      final whole = cell.toString().split('.').first.length;
+      final digits =
+          whole + (whole - 1) ~/ 3 + 1 + math.max<int>(2, cell.scale);
+      width = math.max(width, digits + 3);
+    }
+    return math.min(width, 255);
+  }
+
+  final columns = StringBuffer();
+  for (final (index, header) in rows.first.indexed) {
+    final width = switch (header) {
+      'Дата' || 'Дата слепка' || 'Дата действия' => 13,
+      'Слепок' => 18,
+      'Заметка слепка' => 30,
+      'Курс' => rateWidth(index),
+      _ => null,
+    };
+    if (width != null) {
+      final number = index + 1;
+      columns.write(
+        '<col min="$number" max="$number" width="$width" customWidth="1"/>',
+      );
+    }
+  }
+  return columns.isEmpty ? '' : '<cols>$columns</cols>';
+}
+
 String _sheetXml(List<_Row> rows) {
   const epoch = 25569; // 1970-01-01 в календаре Excel 1900.
   final start = DateTime.utc(1970);
   final output = StringBuffer(
     '<worksheet xmlns="$_main"><sheetViews><sheetView workbookViewId="0">'
     '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
-    '</sheetView></sheetViews><sheetData>',
+    '</sheetView></sheetViews>${_sheetColumns(rows)}<sheetData>',
   );
   for (final (i, row) in rows.indexed) {
     output.write('<row r="${i + 1}">');
@@ -215,6 +292,8 @@ String _sheetXml(List<_Row> rows) {
           output.write(
             '<c r="$cell" s="${number.precision + 2}"><v>${number.value}</v></c>',
           );
+        case Decimal rate:
+          output.write('<c r="$cell" s="$_rateStyle"><v>$rate</v></c>');
         case int integer:
           output.write('<c r="$cell"><v>$integer</v></c>');
       }
@@ -261,18 +340,34 @@ Uint8List _writeWorkbook(List<_Sheet> sheets) {
         '${indexes.map((i) => '<sheet name="${sheets[i - 1].name}" sheetId="$i" r:id="rId$i"/>').join()}'
         '</sheets></workbook>',
   );
-  final formats = List.generate(19, (i) => i);
+  const ratePrefix = '#,##0.00';
+  final ratePrecision = sheets
+      .expand((sheet) => sheet.rows)
+      .expand((row) => row)
+      .whereType<Decimal>()
+      .fold(
+        2,
+        (precision, rate) => rate.scale > precision ? rate.scale : precision,
+      );
+  // Excel ограничивает длину кода формата. В XML число остаётся полным.
+  final rateDecimals = (ratePrecision - 2).clamp(0, 255 - ratePrefix.length);
+  final formats = [
+    'dd.mm.yyyy',
+    for (var i = 0; i < _amountFormats; i++)
+      i == 0 ? '#,##0' : '#,##0.${'0' * i}',
+    '$ratePrefix${'#' * rateDecimals}',
+  ];
   add(
     'xl/styles.xml',
     '<styleSheet xmlns="$_main">'
-        '<numFmts count="20"><numFmt numFmtId="164" formatCode="dd.mm.yyyy"/>'
-        '${formats.map((i) => '<numFmt numFmtId="${165 + i}" formatCode="#,##0${i == 0 ? '' : '.${'0' * i}'}"/>').join()}</numFmts>'
+        '<numFmts count="${formats.length}">'
+        '${formats.indexed.map((entry) => '<numFmt numFmtId="${164 + entry.$1}" formatCode="${entry.$2}"/>').join()}</numFmts>'
         '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
         '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
         '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-        '<cellXfs count="21"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-        '${[164, for (final i in formats) i + 165].map((id) => '<xf numFmtId="$id" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>').join()}</cellXfs>'
+        '<cellXfs count="${formats.length + 1}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        '${formats.indexed.map((entry) => '<xf numFmtId="${164 + entry.$1}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>').join()}</cellXfs>'
         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>',
   );
   for (final i in indexes) {

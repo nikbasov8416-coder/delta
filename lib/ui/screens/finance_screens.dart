@@ -6,6 +6,7 @@ import '../messages.dart';
 import 'home_view.dart';
 import 'data_files.dart';
 import '../file_dialogs.dart';
+import '../theme_settings.dart';
 
 import 'package:decimal/decimal.dart';
 
@@ -361,7 +362,11 @@ class FinanceScreen extends ConsumerWidget {
               '/storage' => _storage(context, ref, data),
               '/catalogs' => _catalogs(context, ref, data),
               '/snapshots' => _snapshots(context, ref, data),
-              '/settings' => [const SyncSettings(), const SecuritySettings()],
+              '/settings' => [
+                const ThemeSettings(),
+                const SyncSettings(),
+                const SecuritySettings(),
+              ],
               '/reports' => [const ReportsView()],
               '/backup' => [const DataFilesView(export: false)],
               '/export' => [const DataFilesView(export: true)],

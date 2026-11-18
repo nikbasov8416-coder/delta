@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'navigation/app_router.dart';
 import 'delta_theme.dart';
+import 'theme_settings.dart';
 import 'security/session_gate.dart';
 
 class DeltaApp extends ConsumerWidget {
@@ -19,6 +20,8 @@ class DeltaApp extends ConsumerWidget {
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
     theme: deltaTheme(Brightness.light),
     darkTheme: deltaTheme(Brightness.dark),
+    themeMode:
+        ref.watch(themePreferenceProvider).value?.mode ?? ThemeMode.system,
     routerConfig: ref.watch(appRouterProvider),
   );
 }
