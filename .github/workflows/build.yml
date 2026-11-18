@@ -120,7 +120,7 @@ jobs:
           cache: true
       - run: flutter pub get --enforce-lockfile
       - run: flutter test --no-pub --reporter expanded
-      - run: flutter build windows --release --no-pub
+      - run: flutter build windows --release --no-pub --build-number=${{ github.run_number }}
       - name: Упаковать весь комплект EXE, DLL и данных
         shell: pwsh
         run: |

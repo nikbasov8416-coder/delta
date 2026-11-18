@@ -53,8 +53,15 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
           final second =
               all.where((s) => s.id == secondId).firstOrNull ?? all.last;
           final comparison = compareSnapshots(first, second);
-          String amount(Decimal value) =>
-              amountsHidden(ref) ? '•••' : exactMoney(value);
+          final precision = {
+            for (final position in [...first.positions, ...second.positions])
+              position.currency: currencyDisplayPrecision(
+                position.kind,
+                position.precision,
+              ),
+          };
+          String amount(Decimal value, [String? code]) =>
+              visibleMoney(ref, value, precision: precision[code] ?? 2);
           Widget group(
             String heading,
             Map<String, ComparisonAmount> values,
@@ -75,7 +82,7 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
                       ),
                       for (final code in e.value.nativeDelta.keys)
                         Text(
-                          '$code: ${amount(e.value.nativeBefore[code] ?? Decimal.zero)} → ${amount(e.value.nativeAfter[code] ?? Decimal.zero)}; разница ${amount(e.value.nativeDelta[code]!)}',
+                          '$code: ${amount(e.value.nativeBefore[code] ?? Decimal.zero, code)} → ${amount(e.value.nativeAfter[code] ?? Decimal.zero, code)}; разница ${amount(e.value.nativeDelta[code]!, code)}',
                         ),
                     ],
                   ),
@@ -145,7 +152,9 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
                       for (var i = 0; i < all.length; i++)
                         DropdownMenuItem(
                           value: all[i].id,
-                          child: Text('${all[i].date} · слепок ${i + 1}'),
+                          child: Text(
+                            '${displayDate(all[i].date)} · слепок ${i + 1}',
+                          ),
                         ),
                     ],
                     onChanged: (id) => setState(() {
@@ -157,7 +166,9 @@ class _ReportsViewState extends ConsumerState<ReportsView> {
                     }),
                   ),
                 const SizedBox(height: 12),
-                Text('${first.date} → ${second.date}'),
+                Text(
+                  '${displayDate(first.date)} → ${displayDate(second.date)}',
+                ),
                 Text('Общая разница: ${amount(comparison.total.delta)} ₽'),
                 Text(
                   'Изменение остатков: ${amount(comparison.total.balance)} ₽',

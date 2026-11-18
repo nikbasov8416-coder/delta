@@ -1,4 +1,7 @@
 import '../messages.dart';
+import '../finance_format.dart';
+
+import 'package:decimal/decimal.dart';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
@@ -35,9 +38,14 @@ class SyncSettings extends ConsumerWidget {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     Text(
-                      'Последняя синхронизация: ${service.lastSync?.toLocal().toString().split('.').first ?? 'ещё не выполнялась'}',
+                      'Последняя синхронизация: ${service.lastSync == null ? 'ещё не выполнялась' : displayDateTime(service.lastSync!.toIso8601String())}',
                     ),
-                    if (service.hasPendingChanges)
+                    if (service.journalStats case final stats?)
+                      Text(
+                        'Журнал на Диске: ${stats.files} файлов, '
+                        '${formatDecimal(Decimal.fromInt(stats.bytes) * Decimal.parse('0.000001'))} МБ',
+                      ),
+                    if (service.hasPendingChanges && service.hasConfiguration)
                       const AppMessage(
                         'Есть неотправленные изменения',
                         kind: MessageKind.warning,
@@ -84,11 +92,22 @@ class SyncSettings extends ConsumerWidget {
                                 : () => _maintenance(context, service, true),
                             child: Text(
                               service.phraseChangePending
-                                  ? 'Продолжить смену фразы'
+                                  ? service.replacingDisk
+                                        ? 'Продолжить замену на Диске'
+                                        : 'Продолжить смену фразы'
                                   : 'Сменить парольную фразу',
                             ),
                           ),
                         ],
+                      ),
+                    if (service.hasConfiguration)
+                      TextButton(
+                        onPressed: service.busy
+                            ? null
+                            : () => _disconnect(context, service),
+                        child: const Text(
+                          'Отключить синхронизацию на этом устройстве',
+                        ),
                       ),
                     TextButton(
                       onPressed: () => Navigator.push(
@@ -105,6 +124,59 @@ class SyncSettings extends ConsumerWidget {
                 ),
               ),
       );
+  Future<void> _disconnect(BuildContext context, SyncService service) async {
+    final pending = await service.refreshPending();
+    if (!context.mounted) return;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Отключить синхронизацию на этом устройстве?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Финансовые данные останутся на устройстве. Файлы на Диске сохранятся.',
+            ),
+            if (pending)
+              const AppMessage(
+                'Есть неотправленные изменения. Сначала синхронизируйте устройство, чтобы они появились на Диске.',
+                kind: MessageKind.warning,
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Отмена'),
+          ),
+          if (pending && service.enabled)
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, 'sync'),
+              child: const Text('Сначала синхронизировать'),
+            ),
+          FilledButton(
+            style: destructiveStyle(dialog),
+            onPressed: () => Navigator.pop(dialog, 'disconnect'),
+            child: Text(pending ? 'Всё равно отключить' : 'Отключить'),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || choice == null) return;
+    if (choice == 'sync') {
+      await service.synchronize();
+    } else {
+      await service.disconnect(discardPending: pending);
+      if (context.mounted && service.error == null) {
+        AppMessage.show(
+          context,
+          'Синхронизация отключена.',
+          kind: MessageKind.success,
+        );
+      }
+    }
+  }
+
   Future<void> _maintenance(
     BuildContext context,
     SyncService service,
@@ -237,11 +309,14 @@ class _Connect extends StatefulWidget {
   State<_Connect> createState() => _ConnectState();
 }
 
+enum _JoinMode { fromDisk, merge, fromDevice }
+
 class _ConnectState extends State<_Connect> {
   final token = TextEditingController(),
       phrase = TextEditingController(),
       confirmation = TextEditingController();
-  bool replace = true, accepted = false, busy = false;
+  var mode = _JoinMode.fromDisk;
+  bool accepted = false, busy = false;
   String? error;
   Future<void> _oauthLink() async {
     await showDialog<void>(
@@ -293,7 +368,8 @@ class _ConnectState extends State<_Connect> {
         token: token.text,
         phrase: phrase.text,
         create: widget.create,
-        replace: replace,
+        replace: mode == _JoinMode.fromDisk,
+        replaceFromDevice: mode == _JoinMode.fromDevice,
       );
       if (!mounted) return;
       if (widget.service.error == null) {
@@ -360,25 +436,50 @@ class _ConnectState extends State<_Connect> {
                   ),
                 ),
               if (!widget.create && widget.hasData) ...[
-                const Text(
-                  'На устройстве есть локальные данные и справочники. Замена удалит локальные финансовые данные и незагруженные изменения. Настройки безопасности сохранятся.',
-                ),
-                DropdownButtonFormField<bool>(
+                if (mode == _JoinMode.fromDisk)
+                  const AppMessage(
+                    'Замена удалит локальные финансовые данные и незагруженные изменения. Настройки безопасности сохранятся.',
+                    kind: MessageKind.warning,
+                  ),
+                if (mode == _JoinMode.fromDevice)
+                  const AppMessage(
+                    'Текущие данные на Диске будут заменены данными этого устройства. '
+                    'Остальные устройства нужно подключить заново.',
+                    kind: MessageKind.warning,
+                  ),
+                DropdownButtonFormField<_JoinMode>(
                   isExpanded: true,
-                  initialValue: true,
-                  items: const [
-                    DropdownMenuItem(
-                      value: true,
-                      child: Text('Заменить данными с Диска'),
+                  initialValue: _JoinMode.fromDisk,
+                  items: [
+                    const DropdownMenuItem(
+                      value: _JoinMode.fromDisk,
+                      child: Text(
+                        'Заменить данными с Диска',
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                    DropdownMenuItem(
-                      value: false,
-                      child: Text('Объединить по времени изменений'),
+                    const DropdownMenuItem(
+                      value: _JoinMode.merge,
+                      child: Text(
+                        'Объединить по времени изменений',
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
+                    if (!widget.service.hasConfiguration)
+                      const DropdownMenuItem(
+                        value: _JoinMode.fromDevice,
+                        child: Text(
+                          'Заменить данными этого устройства',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                   ],
                   onChanged: busy
                       ? null
-                      : (v) => setState(() => replace = v ?? true),
+                      : (value) => setState(() {
+                          mode = value ?? _JoinMode.fromDisk;
+                          accepted = false;
+                        }),
                 ),
               ],
               const Text(syncLossWarning),
@@ -403,7 +504,7 @@ class _ConnectState extends State<_Connect> {
           child: const Text('Отмена'),
         ),
         FilledButton(
-          style: !widget.create && widget.hasData && replace
+          style: !widget.create && widget.hasData && mode != _JoinMode.merge
               ? destructiveStyle(context)
               : null,
           onPressed: busy || !accepted ? null : _submit,

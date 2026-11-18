@@ -70,6 +70,15 @@ extension SyncMaintenance on SyncService {
       );
     }
     await _sync(); // Сначала полный обмен. Ошибка не создаёт намерения смены.
+    await _prepareRotation(phrase, _credentials);
+    await _resumeRotation();
+  });
+
+  Future<void> _prepareRotation(
+    String phrase,
+    Map<String, dynamic> credentials, {
+    bool replaceFromDevice = false,
+  }) async {
     final meta = SyncCrypto.header(format: 2);
     final crypto = await derive(phrase, meta);
     meta['check'] = base64Encode(
@@ -80,8 +89,9 @@ extension SyncMaintenance on SyncService {
     );
     await journal.set('rotation_plan', '');
     final nextCredentials = {
-      ..._credentials,
+      ...credentials,
       'rotation': {
+        if (replaceFromDevice) 'replaceFromDevice': true,
         'meta': meta,
         'key': base64Encode(await crypto.key.extractBytes()),
       },
@@ -91,8 +101,7 @@ extension SyncMaintenance on SyncService {
       jsonEncode(nextCredentials),
     );
     _credentials = nextCredentials;
-    await _resumeRotation();
-  });
+  }
 
   Future<void> _resumeRotation() async {
     _alive();
@@ -107,7 +116,7 @@ extension SyncMaintenance on SyncService {
     var stored = await journal.get('rotation_plan');
     Map<String, dynamic> plan;
     if (stored == null || stored.isEmpty) {
-      await _sync();
+      if (rotation['replaceFromDevice'] != true) await _sync();
       final entries = <Map<String, dynamic>>[];
       var boundary = 0;
       await repository.db.transaction(() async {

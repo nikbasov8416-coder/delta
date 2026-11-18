@@ -17,6 +17,8 @@ Windows 10+ x64. Интерфейс на русском, Material 3, светл�
 - [Подключение устройств, формат и восстановление синхронизации](docs/SYNC.md).
 - [Отчёты, сравнение и скрытие сумм](docs/REPORTS.md).
 - [Постоянная подпись Android](docs/ANDROID_SIGNING.md).
+- [Резервные копии и экспорт в Excel](docs/BACKUP.md).
+- [Генерация иконок Android и Windows](docs/ICON.md).
 - [Версии и лицензии всех зависимостей](DEPENDENCIES.md).
 
 Flutter stable 3.50.0 / Dart 3.14.0. Структура: `lib/domain`, `lib/data`, `lib/ui`.

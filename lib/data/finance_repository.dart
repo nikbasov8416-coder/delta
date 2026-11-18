@@ -389,7 +389,7 @@ class DriftFinanceRepository implements FinanceRepository {
   Future<SnapshotDetail> snapshot(String id) async => SnapshotDetail(
     await _one('snapshot', id),
     await query(
-      'SELECT sl.*,s.name AS storage_name,c.code,c.precision,l.name AS liquidity_name,l.sort_order AS liquidity_order FROM snapshot_line sl JOIN storage s ON s.id=sl.storage_id JOIN currency c ON c.id=sl.currency_id JOIN liquidity_level l ON l.id=sl.liquidity_id WHERE sl.snapshot_id=? AND sl.deleted=0 ORDER BY l.sort_order,s.sort_order,s.name,c.code',
+      'SELECT sl.*,s.name AS storage_name,c.code,c.precision,c.kind,l.name AS liquidity_name,l.sort_order AS liquidity_order FROM snapshot_line sl JOIN storage s ON s.id=sl.storage_id JOIN currency c ON c.id=sl.currency_id JOIN liquidity_level l ON l.id=sl.liquidity_id WHERE sl.snapshot_id=? AND sl.deleted=0 ORDER BY l.sort_order,s.sort_order,s.name,c.code',
       [id],
     ),
     await query(
@@ -874,9 +874,11 @@ class DriftFinanceRepository implements FinanceRepository {
     String id, {
     bool today = false,
     bool force = false,
+    bool draftPreview = false,
   }) async {
     final detail = await snapshot(id);
-    if (detail.lines.any((l) => l.values['amount'] == null)) {
+    final preview = draftPreview && detail.header.text('status') == 'draft';
+    if (!preview && detail.lines.any((l) => l.values['amount'] == null)) {
       throw StateError('Не все суммы заполнены');
     }
     final codes = detail.lines.map((l) => l.text('code')).toSet();
@@ -915,8 +917,12 @@ class DriftFinanceRepository implements FinanceRepository {
           storageId: line.text('storage_id'),
           currencyCode: line.text('code'),
           liquidityId: line.text('liquidity_id'),
-          amount: line.decimal('amount'),
-          familyAmount: line.decimal('family_amount'),
+          amount: line.values['amount'] == null
+              ? Decimal.zero
+              : line.decimal('amount'),
+          familyAmount: line.values['amount'] == null
+              ? Decimal.zero
+              : line.decimal('family_amount'),
         ),
       ),
       {for (final quote in quotes.values) quote.code: quote.value},
@@ -947,7 +953,7 @@ class DriftFinanceRepository implements FinanceRepository {
     );
     for (final header in headers) {
       final lines = await query(
-        'SELECT sl.*,s.name AS storage_name,s.liquidity_id AS current_liquidity_id,l.name AS liquidity_name,l.sort_order AS liquidity_order,l.color AS liquidity_color,c.code,c.precision FROM snapshot_line sl JOIN storage s ON s.id=sl.storage_id JOIN liquidity_level l ON l.id=s.liquidity_id JOIN currency c ON c.id=sl.currency_id WHERE sl.snapshot_id=? AND sl.deleted=0 ORDER BY sl.id',
+        'SELECT sl.*,s.name AS storage_name,s.liquidity_id AS current_liquidity_id,l.name AS liquidity_name,l.sort_order AS liquidity_order,l.color AS liquidity_color,c.code,c.precision,c.kind FROM snapshot_line sl JOIN storage s ON s.id=sl.storage_id JOIN liquidity_level l ON l.id=s.liquidity_id JOIN currency c ON c.id=sl.currency_id WHERE sl.snapshot_id=? AND sl.deleted=0 ORDER BY sl.id',
         [header.id],
       );
       final rates = await query(
@@ -982,6 +988,7 @@ class DriftFinanceRepository implements FinanceRepository {
               storageName: row.text('storage_name'),
               currency: row.text('code'),
               precision: row.number('precision'),
+              kind: row.text('kind'),
               liquidityId: row.text('current_liquidity_id'),
               liquidityName: row.text('liquidity_name'),
               liquidityOrder: row.number('liquidity_order'),

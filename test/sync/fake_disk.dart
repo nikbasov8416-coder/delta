@@ -44,6 +44,18 @@ class FakeDisk implements SyncDisk {
       ..sort();
   }
 
+  final modified = <String, DateTime>{};
+  @override
+  Future<List<SyncDiskEntry>> listEntries(String path) async => [
+    for (final name in await list(path))
+      SyncDiskEntry(
+        name,
+        directory: !files.containsKey('$path$name'),
+        size: files['$path$name']?.length,
+        modified: modified['$path$name'],
+      ),
+  ];
+
   @override
   Future<void> publish(String path, Uint8List bytes) async {
     if (!path.startsWith(syncRoot)) {

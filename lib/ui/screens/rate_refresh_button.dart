@@ -2,23 +2,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../domain/finance/records.dart';
+import '../../domain/rates/rates.dart';
 import '../providers.dart';
 import '../messages.dart';
 import '../finance_format.dart';
 
-String rateRecordInfo(FinanceRecord rate) {
-  String date(String field) {
-    final value = rate.text(field);
-    return DateTime.tryParse(value) == null ? '—' : displayDate(value);
-  }
+String compactRateSource(String source) =>
+    source == 'cbr' ? 'ЦБ' : rateSourceLabel(source);
 
-  final stored = rate.text('fetched_at');
-  final parsed = DateTime.tryParse(stored)?.toLocal();
-  final time = parsed == null
-      ? ''
-      : ' ${parsed.hour.toString().padLeft(2, '0')}:${parsed.minute.toString().padLeft(2, '0')}';
-  return 'Дата курса: ${date('rate_date')}\nДействует / наблюдение: ${date('effective_at')}\nПолучен: ${date('fetched_at')}$time';
-}
+String rateRecordInfo(FinanceRecord rate) =>
+    'Дата курса: ${displayDateTime(rate.text('rate_date'))}\n'
+    'Действует / наблюдение: ${displayDateTime(rate.text('effective_at'))}\n'
+    'Получен: ${displayDateTime(rate.text('fetched_at'))}';
 
 class RateRefreshButton extends ConsumerStatefulWidget {
   const RateRefreshButton({required this.id, required this.fixed, super.key});

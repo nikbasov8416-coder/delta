@@ -4,6 +4,8 @@ import '../reports/reports_screen.dart';
 import '../finance_format.dart';
 import '../messages.dart';
 import 'home_view.dart';
+import 'data_files.dart';
+import '../file_dialogs.dart';
 
 import 'package:decimal/decimal.dart';
 
@@ -354,13 +356,28 @@ class FinanceScreen extends ConsumerWidget {
               '/snapshots' => _snapshots(context, ref, data),
               '/settings' => [const SyncSettings(), const SecuritySettings()],
               '/reports' => [const ReportsView()],
+              '/backup' => [const DataFilesView(export: false)],
+              '/export' => [const DataFilesView(export: true)],
               '/more' => [
-                for (final path in ['/storage', '/catalogs', '/settings'])
+                for (final path in [
+                  '/storage',
+                  '/catalogs',
+                  '/settings',
+                  '/backup',
+                  '/export',
+                ])
                   ListTile(
                     title: Text(appScreens[path]!),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => context.push(path),
                   ),
+                ref
+                    .watch(applicationVersionProvider)
+                    .when(
+                      loading: () => const SizedBox.shrink(),
+                      error: (_, _) => const Text('Версия недоступна'),
+                      data: (version) => ListTile(title: Text(version)),
+                    ),
               ],
               _ => [
                 HomeView(
@@ -855,15 +872,26 @@ class SnapshotScreen extends ConsumerWidget {
                 const Text('После фиксации изменений пока не было.'),
               for (final entry in detail.audit)
                 ExpansionTile(
-                  title: Text(entry.text('changed_at')),
+                  title: Text(displayDateTime(entry.text('changed_at'))),
                   subtitle: Text(_entityLabel(entry.text('entity_type'))),
-                  children: _auditChanges(entry, amountsHidden(ref)),
+                  children: _auditChanges(
+                    entry,
+                    detail.lines,
+                    amountsHidden(ref),
+                  ),
                 ),
             ],
           ),
         ),
   );
-  List<Widget> _auditChanges(FinanceRecord entry, bool hidden) {
+  List<Widget> _auditChanges(
+    FinanceRecord entry,
+    List<FinanceRecord> lines,
+    bool hidden,
+  ) {
+    final position = lines
+        .where((line) => line.id == entry.text('entity_id'))
+        .firstOrNull;
     final before = jsonDecode(entry.text('old_value')) as Map<String, dynamic>;
     final after = jsonDecode(entry.text('new_value')) as Map<String, dynamic>;
     const labels = {
@@ -885,7 +913,19 @@ class SnapshotScreen extends ConsumerWidget {
       }
       if (key == 'confirmed') return value == 1 ? 'Да' : 'Нет';
       if (['amount', 'family_amount', 'rate'].contains(key)) {
-        return hidden ? '•••' : value.toString().replaceAll('.', ',');
+        if (hidden) return '•••';
+        final number = Decimal.parse(value.toString());
+        if (position == null || key == 'rate') return exactMoney(number);
+        return formatMoney(
+          number,
+          precision: currencyDisplayPrecision(
+            position.text('kind'),
+            position.number('precision'),
+          ),
+        );
+      }
+      if (['date', 'rate_date', 'effective_at', 'fetched_at'].contains(key)) {
+        return displayDateTime(value.toString());
       }
       return value.toString();
     }
@@ -933,10 +973,10 @@ class SnapshotScreen extends ConsumerWidget {
                   line.flag('confirmed') ? Icons.check_circle : Icons.edit_note,
                 ),
                 title: Text(
-                  '${line.text('code')}: ${line.values['amount'] == null ? 'не заполнено' : visibleMoney(ref, line.decimal('amount'), precision: line.number('precision'))}',
+                  '${line.text('code')}: ${line.values['amount'] == null ? 'не заполнено' : visibleMoney(ref, line.decimal('amount'), precision: currencyDisplayPrecision(line.text('kind'), line.number('precision')))}',
                 ),
                 subtitle: Text(
-                  'Семейные: ${visibleMoney(ref, line.decimal('family_amount'), precision: line.number('precision'))}',
+                  'Семейные: ${visibleMoney(ref, line.decimal('family_amount'), precision: currencyDisplayPrecision(line.text('kind'), line.number('precision')))}',
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1061,7 +1101,7 @@ class SnapshotScreen extends ConsumerWidget {
       title: Text(
         value.isEmpty
             ? '${line.text('code')} · Введите курс'
-            : '${line.text('code')} ${amountsHidden(ref) ? '•••' : exactMoney(Decimal.parse(value))} ₽ · ${matches.isEmpty ? 'Постоянный курс' : rateSourceLabel(matches.first.text('source'))}',
+            : '${line.text('code')} ${amountsHidden(ref) ? '•••' : exactMoney(Decimal.parse(value))} ₽ · ${matches.isEmpty ? 'Постоянный курс' : compactRateSource(matches.first.text('source'))}',
       ),
       trailing: matches.isEmpty
           ? null
@@ -1123,7 +1163,14 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
           _force = false;
           _future = ref
               .read(repositoryProvider.future)
-              .then((r) => r.valuation(id, today: today, force: force));
+              .then(
+                (r) => r.valuation(
+                  id,
+                  today: today,
+                  force: force,
+                  draftPreview: true,
+                ),
+              );
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1199,10 +1246,10 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
                         ListTile(
                           dense: true,
                           title: Text(
-                            '${quote.code} ${amountsHidden(ref) ? '•••' : exactMoney(quote.value)} ₽ · ${rateSourceLabel(quote.source)}',
+                            '${quote.code} ${amountsHidden(ref) ? '•••' : exactMoney(quote.value)} ₽ · ${compactRateSource(quote.source)}',
                           ),
                           trailing: _RateInfo(
-                            'Действует / наблюдение: ${quote.effectiveAt}\nПолучен: ${quote.fetchedAt.toLocal()}${quote.cached ? ' · кэш' : ''}',
+                            'Действует / наблюдение: ${displayDateTime(quote.effectiveAt)}\nПолучен: ${displayDateTime(quote.fetchedAt.toIso8601String())}${quote.cached ? ' · кэш' : ''}',
                           ),
                         ),
                     block('По местам', [
@@ -1223,11 +1270,7 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
                         (
                           entry.key,
                           entry.value,
-                          data.lines
-                              .firstWhere(
-                                (line) => line.text('code') == entry.key,
-                              )
-                              .number('precision'),
+                          _currencyPrecision(data, entry.key),
                           null,
                         ),
                     ]),
@@ -1254,6 +1297,11 @@ class _TotalsViewState extends ConsumerState<TotalsView> {
       },
     );
   }
+}
+
+int _currencyPrecision(SnapshotDetail detail, String code) {
+  final line = detail.lines.firstWhere((line) => line.text('code') == code);
+  return currencyDisplayPrecision(line.text('kind'), line.number('precision'));
 }
 
 class _RateInfo extends StatelessWidget {
@@ -1471,10 +1519,6 @@ class _SecuritySettingsState extends ConsumerState<SecuritySettings> {
                   }
                 }
               },
-      ),
-      const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('Экспорт появится на следующем этапе.'),
       ),
     ],
   );

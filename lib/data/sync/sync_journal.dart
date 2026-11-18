@@ -36,7 +36,12 @@ class SyncJournal {
   SyncJournal(this.db, this.clock);
   final AppDatabase db;
   final HybridClock clock;
-  static Future<void> install(AppDatabase db) async {
+  static Future<void> install(AppDatabase db) => db.transaction(() async {
+    final existing = await db
+        .customSelect(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_local'",
+        )
+        .get();
     await db.customStatement(
       'CREATE TABLE IF NOT EXISTS sync_local (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
     );
@@ -59,24 +64,17 @@ class SyncJournal {
       }
     }
     // Обновление с этапа 3: уже существующие строки тоже должны попасть на Диск.
-    if ((await db
-            .customSelect("SELECT 1 FROM sync_local WHERE key='bootstrapped'")
-            .get())
-        .isEmpty) {
-      await db.transaction(() async {
-        for (final table in syncTables) {
-          final rows = await db.customSelect('SELECT * FROM $table').get();
-          for (final row in rows) {
-            await db.customStatement(
-              'INSERT INTO sync_outbox(entity,payload) VALUES (?,?)',
-              [table, jsonEncode(row.data)],
-            );
-          }
-        }
+    if (existing.isEmpty) await enqueueAll(db);
+  });
+
+  static Future<void> enqueueAll(AppDatabase db) async {
+    for (final table in syncTables) {
+      for (final row in await db.customSelect('SELECT * FROM $table').get()) {
         await db.customStatement(
-          "INSERT INTO sync_local VALUES ('bootstrapped','1')",
+          'INSERT INTO sync_outbox(entity,payload) VALUES (?,?)',
+          [table, jsonEncode(row.data)],
         );
-      });
+      }
     }
   }
 

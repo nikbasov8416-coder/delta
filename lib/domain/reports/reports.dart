@@ -27,10 +27,12 @@ class ReportPosition {
     required this.liquidityName,
     required this.amount,
     required this.family,
+    this.kind = '',
     this.liquidityOrder = 0,
     this.liquidityColor = 0xff26a69a,
   });
   final String storageId, storageName, currency, liquidityId, liquidityName;
+  final String kind;
   final int precision, liquidityOrder, liquidityColor;
   final Decimal amount, family;
 }

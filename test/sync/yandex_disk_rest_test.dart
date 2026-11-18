@@ -199,7 +199,10 @@ void main() {
     ]);
     for (final request in client.requests) {
       expect(request.uri.queryParameters['limit'], '2');
-      expect(request.uri.queryParameters['fields'], '_embedded.items.name');
+      expect(
+        request.uri.queryParameters['fields'],
+        '_embedded.items.name,_embedded.items.type,_embedded.items.size,_embedded.items.modified',
+      );
       expect(request.uri.queryParameters['path'], 'app:/log');
     }
     _authBoundary(client);

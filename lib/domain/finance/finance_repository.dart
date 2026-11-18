@@ -42,6 +42,7 @@ abstract interface class FinanceRepository {
     String id, {
     bool today = false,
     bool force = false,
+    bool draftPreview = false,
   });
   Future<void> addSnapshotCurrency(
     String snapshotId,

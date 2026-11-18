@@ -120,7 +120,12 @@ class YandexWebDav implements SyncDisk {
   }
 
   @override
-  Future<List<String>> list(String path) async {
+  Future<List<String>> list(String path) async => [
+    for (final entry in await listEntries(path)) entry.name,
+  ];
+
+  @override
+  Future<List<SyncDiskEntry>> listEntries(String path) async {
     address(path);
     if (!path.endsWith('/')) throw const SyncFailure('Ожидается папка.');
     final result = await _request('PROPFIND', path, headers: {'Depth': '1'});
@@ -130,7 +135,7 @@ class YandexWebDav implements SyncDisk {
       final text = utf8.decode(result.$2);
       if (text.contains('<!DOCTYPE')) throw const FormatException();
       final document = XmlDocument.parse(text);
-      final found = <String>[];
+      final found = <String, SyncDiskEntry>{};
       for (final element in document.descendants.whereType<XmlElement>().where(
         (e) => e.name.local == 'href',
       )) {
@@ -150,9 +155,29 @@ class YandexWebDav implements SyncDisk {
             .substring(path.length)
             .replaceFirst(RegExp(r'/$'), '');
         if (name.isEmpty || name.contains('/')) throw const FormatException();
-        found.add(name);
+        final response = element.parent;
+        String? property(String field) => response?.descendants
+            .whereType<XmlElement>()
+            .where((node) => node.name.local == field)
+            .firstOrNull
+            ?.innerText;
+        DateTime? modified;
+        final value = property('getlastmodified');
+        if (value != null) {
+          try {
+            modified = HttpDate.parse(value);
+          } on FormatException {
+            // Без достоверной даты файл не подлежит уборке.
+          }
+        }
+        found[name] = SyncDiskEntry(
+          name,
+          directory: candidate.endsWith('/'),
+          size: int.tryParse(property('getcontentlength') ?? ''),
+          modified: modified,
+        );
       }
-      return found.toSet().toList()..sort();
+      return found.values.toList()..sort((a, b) => a.name.compareTo(b.name));
     } on SyncFailure {
       rethrow;
     } catch (_) {

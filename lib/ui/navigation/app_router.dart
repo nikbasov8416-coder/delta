@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/finance_screens.dart';
+import '../messages.dart';
 import 'app_routes.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -26,7 +27,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
     ],
     errorBuilder: (context, state) =>
-        const Scaffold(body: Center(child: Text('Страница не найдена'))),
+        const Scaffold(body: Center(child: AppMessage('Страница не найдена'))),
   );
   ref.onDispose(router.dispose);
   return router;

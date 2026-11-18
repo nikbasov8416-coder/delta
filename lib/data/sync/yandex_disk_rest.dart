@@ -280,18 +280,23 @@ class YandexDiskRest implements SyncDisk {
   }
 
   @override
-  Future<List<String>> list(String path) async {
+  Future<List<String>> list(String path) async => [
+    for (final entry in await listEntries(path)) entry.name,
+  ];
+
+  @override
+  Future<List<SyncDiskEntry>> listEntries(String path) async {
     final resource = resourcePath(path);
     if (!path.endsWith('/')) throw const SyncFailure('Ожидается папка.');
     var offset = 0;
-    final result = <String>{};
+    final result = <String, SyncDiskEntry>{};
     final watch = Stopwatch()..start();
     while (true) {
       final page = await _request(
         'GET',
         _api('resources', {
           'path': resource,
-          'fields': '_embedded.items.name',
+          'fields': '_embedded.items.name,_embedded.items.type,_embedded.items.size,_embedded.items.modified',
           'limit': '$pageSize',
           'offset': '$offset',
         }),
@@ -317,9 +322,19 @@ class YandexDiskRest implements SyncDisk {
             name.contains(RegExp(r'[/\\%?#]'))) {
           throw const SyncFailure('Некорректное имя файла синхронизации.');
         }
-        result.add(name);
+        final properties = item as Map;
+        final modified = properties['modified'];
+        final size = properties['size'];
+        result[name] = SyncDiskEntry(
+          name,
+          directory: properties['type'] == 'dir',
+          size: size is int && size >= 0 ? size : null,
+          modified: modified is String ? DateTime.tryParse(modified) : null,
+        );
       }
-      if (items.length < pageSize) return result.toList()..sort();
+      if (items.length < pageSize) {
+        return result.values.toList()..sort((a, b) => a.name.compareTo(b.name));
+      }
       offset += items.length;
     }
   }

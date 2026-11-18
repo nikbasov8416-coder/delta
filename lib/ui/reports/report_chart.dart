@@ -139,7 +139,7 @@ class ReportPlot extends ConsumerWidget {
     final high = values.reduce(math.max);
     final low = mini ? values.reduce(math.min) : 0.0;
     final range = high - low;
-    final verticalStep = (high == 0 ? 1.0 : high) / 4;
+    final verticalStep = (high == 0 ? 1.0 : high) / 5;
     final axisEnd = math.max(dates.positions.last, 1.0);
     final axisWidth = hidden ? 24.0 : 52.0;
     final axisText = theme.textTheme.labelSmall;
@@ -176,7 +176,7 @@ class ReportPlot extends ConsumerWidget {
                                 (range == 0
                                     ? math.max(high * 0.1, 1)
                                     : range * 0.1)
-                          : verticalStep * 4,
+                          : verticalStep * 5,
                       borderData: FlBorderData(show: false),
                       gridData: FlGridData(
                         show: !mini,

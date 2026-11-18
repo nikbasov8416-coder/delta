@@ -23,9 +23,7 @@ class SyncCrypto {
     'memory': memory,
     'iterations': iterations,
     'parallelism': parallelism,
-    'salt': base64Encode(
-      List.generate(16, (_) => Random.secure().nextInt(256)),
-    ),
+    'salt': base64Encode(newSalt()),
   };
   static void validate(Map<String, dynamic> meta) {
     try {
@@ -54,7 +52,18 @@ class SyncCrypto {
     if (phrase.isEmpty) {
       throw const SyncFailure('Введите парольную фразу синхронизации.');
     }
-    final salt = base64Decode(meta['salt'] as String);
+    return deriveKey(phrase, base64Decode(meta['salt'] as String));
+  }
+
+  static List<int> newSalt() {
+    final random = Random.secure();
+    return List.generate(16, (_) => random.nextInt(256));
+  }
+
+  static Future<SyncCrypto> deriveKey(String phrase, List<int> salt) async {
+    if (salt.length != 16 || phrase.isEmpty) {
+      throw ArgumentError('Некорректные параметры ключа');
+    }
     // Тяжёлая KDF не блокирует интерфейс. Параметры meta строго ограничены.
     final bytes = await Isolate.run(() async {
       final key = await Argon2id(

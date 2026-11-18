@@ -164,3 +164,12 @@ fl_chart, Argon2id и WebDAV-клиент добавляются
 | xml | 7.1.0 | основная | [MIT](https://pub.dev/packages/xml/versions/7.1.0/license) | `0be767174b97278f17da4923a74169e8645631f03ea3d8482ec3523c9b1a0dd3` |
 | yaml | 3.1.4 | транзитивная | [MIT](https://pub.dev/packages/yaml/versions/3.1.4/license) | `d47b93335401b052d79a2f5a3710e4cf7b5aed782faedf84d40fbdd6eb934ec7` |
 | yaml_edit | 2.2.4 | транзитивная | [BSD-3-Clause](https://pub.dev/packages/yaml_edit/versions/2.2.4/license) | `021c41b9b081664f6ee181aaf4e03602c51591204dabe9ac8c8d736f0965b851` |
+
+## Этап 6
+
+- `archive 3.6.1` — MIT, SHA-256 файла LICENSE
+  `32f97d332eae7453ec4079858e6f1d74be85beeb6d3881068b47d02a379cccea`.
+  Используется для записи ZIP-контейнера XLSX. Дополнительных транзитивных
+  пакетов в lockfile нет.
+- Pillow 12.3.0 — HPND, локальный инструмент генерации иконок (см. `docs/ICON.md`).
+  Для сборки и запуска Delta Pillow не требуется.

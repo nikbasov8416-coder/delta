@@ -9,6 +9,9 @@ ThemeData deltaTheme(Brightness brightness) {
         seedColor: personalColor,
         brightness: brightness,
       ).copyWith(
+        primaryContainer: brightness == Brightness.light
+            ? const Color(0xffcce8e2)
+            : null,
         surface: brightness == Brightness.light
             ? const Color(0xfff2f8f6)
             : const Color(0xff101c1a),

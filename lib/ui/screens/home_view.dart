@@ -134,13 +134,18 @@ class _TotalCard extends ConsumerWidget {
     final totals = snapshots.last.totals.rubles;
     final change = changeFromPrevious(snapshots);
     final decreased = change != null && change.amount < Decimal.zero;
-    String signed(Decimal number) {
+    final changeColor = decreased
+        ? colors.error
+        : theme.brightness == Brightness.dark
+        ? const Color(0xff9de3aa)
+        : const Color(0xff006627);
+    String signed(Decimal number, {int precision = 2}) {
       final sign = number < Decimal.zero
           ? '−'
           : number > Decimal.zero
           ? '+'
           : '';
-      return '$sign${formatMoney(number.abs(), precision: 2)}';
+      return '$sign${formatMoney(number.abs(), precision: precision)}';
     }
 
     Widget ownership(String title, Decimal value, Color color) => Expanded(
@@ -188,23 +193,30 @@ class _TotalCard extends ConsumerWidget {
               ),
             ),
             if (change != null)
-              Text(
-                '${decreased
-                    ? '↓ '
-                    : change.amount > Decimal.zero
-                    ? '↑ '
-                    : ''}'
-                '${change.percent == null ? '' : '${signed(change.percent!)} % '}'
-                '(${amountsHidden(ref) ? '•••' : signed(change.amount)} ₽) с прошлого слепка'
-                '${today ? ' · по сегодняшнему курсу' : ''}',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: decreased
-                      ? colors.error
-                      : theme.brightness == Brightness.dark
-                      ? const Color(0xff9de3aa)
-                      : const Color(0xff006627),
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (change.amount != Decimal.zero)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4, top: 2),
+                      child: Icon(
+                        decreased ? Icons.arrow_downward : Icons.arrow_upward,
+                        size: 15,
+                        color: changeColor,
+                      ),
+                    ),
+                  Expanded(
+                    child: Text(
+                      '${change.percent == null ? '' : '${signed(change.percent!, precision: 1)} % '}'
+                      '(${amountsHidden(ref) ? '•••' : signed(change.amount)} ₽) с прошлого слепка'
+                      '${today ? ' · по сегодняшнему курсу' : ''}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: changeColor,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             const SizedBox(height: 16),
             Semantics(
@@ -332,7 +344,10 @@ class _HomeBreakdown extends ConsumerWidget {
                             visibleMoney(
                               ref,
                               position.amount,
-                              precision: position.precision,
+                              precision: currencyDisplayPrecision(
+                                position.kind,
+                                position.precision,
+                              ),
                             ),
                           ),
                         ),

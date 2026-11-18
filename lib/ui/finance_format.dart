@@ -30,6 +30,19 @@ String displayDate(String iso, {bool short = false}) {
   return short ? '$day.$month' : '$day.$month.${date.year}';
 }
 
+int currencyDisplayPrecision(String kind, int precision) =>
+    kind == 'fiat' ? 2 : precision;
+
+String displayDateTime(String iso) {
+  final parsed = DateTime.tryParse(iso);
+  if (parsed == null) return '—';
+  if (iso.length == 10) return displayDate(iso);
+  final date = parsed.toLocal();
+  final hours = date.hour.toString().padLeft(2, '0');
+  final minutes = date.minute.toString().padLeft(2, '0');
+  return '${displayDate(date.toIso8601String())} $hours:$minutes';
+}
+
 class AmountInputFormatter extends TextInputFormatter {
   const AmountInputFormatter();
 

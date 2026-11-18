@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:delta/ui/delta_theme.dart';
+import 'package:delta/ui/file_dialogs.dart';
 import 'package:delta/ui/messages.dart';
 import 'package:delta/ui/navigation/app_router.dart';
 import 'package:delta/ui/providers.dart';
@@ -98,6 +99,9 @@ void main() {
           ProviderScope(
             overrides: [
               repositoryProvider.overrideWith((ref) async => repo),
+              applicationVersionProvider.overrideWith(
+                (ref) async => 'Версия 0.1.0 (сборка 17)',
+              ),
               secretStoreProvider.overrideWithValue(MemorySecrets()),
             ],
             child: Consumer(
@@ -152,6 +156,15 @@ void main() {
         }
 
         await save('home');
+        await tester.tap(find.byTooltip('Скрыть суммы'));
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('−7,1 % (••• ₽) с прошлого слепка'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('4\u00a0554\u00a0248,04'), findsNothing);
+        await tester.tap(find.byTooltip('Показать суммы'));
+        await tester.pumpAndSettle();
         router.go('/snapshots/$last');
         await tester.pumpAndSettle();
         expect(find.text('Зафиксирован'), findsOneWidget);
@@ -166,7 +179,14 @@ void main() {
           find.descendant(of: navigation, matching: find.text('Ещё')),
         );
         await tester.pumpAndSettle();
-        for (final page in ['Места хранения', 'Справочники', 'Настройки']) {
+        expect(find.text('Версия 0.1.0 (сборка 17)'), findsOneWidget);
+        for (final page in [
+          'Места хранения',
+          'Справочники',
+          'Настройки',
+          'Резервная копия',
+          'Экспорт в Excel',
+        ]) {
           await tester.tap(find.widgetWithText(ListTile, page));
           await tester.pumpAndSettle();
           expect(find.widgetWithText(AppBar, page), findsOneWidget);
@@ -204,6 +224,33 @@ void main() {
       });
     }
   }
+
+  test('Контраст текста и кнопок выдерживает WCAG AA в обеих темах', () {
+    double contrast(Color a, Color b) {
+      final left = a.computeLuminance(), right = b.computeLuminance();
+      return left > right
+          ? (left + .05) / (right + .05)
+          : (right + .05) / (left + .05);
+    }
+
+    for (final brightness in Brightness.values) {
+      final color = deltaTheme(brightness).colorScheme;
+      for (final (foreground, background) in [
+        (color.onSurface, color.surface),
+        (color.onSurface, color.surfaceContainerLow),
+        (color.onPrimary, color.primary),
+        (color.onPrimaryContainer, color.primaryContainer),
+        (color.onErrorContainer, color.errorContainer),
+        (color.error, color.primaryContainer),
+      ]) {
+        expect(
+          contrast(foreground, background),
+          greaterThanOrEqualTo(4.5),
+          reason: '${brightness.name}: $foreground на $background',
+        );
+      }
+    }
+  });
 
   testWidgets('Общие плашки ошибок, предупреждений и успеха', (tester) async {
     await tester.pumpWidget(
