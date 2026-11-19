@@ -261,6 +261,14 @@ class _HomeBreakdown extends ConsumerWidget {
     for (final position in snapshot.positions) {
       positions.putIfAbsent(position.storageId, () => []).add(position);
     }
+    final storageTotals = snapshot.totals.byStorageRubles.entries.toList()
+      ..sort((a, b) {
+        final byTotal = b.value.total.compareTo(a.value.total);
+        if (byTotal != 0) return byTotal;
+        return positions[a.key]!.first.storageName.compareTo(
+          positions[b.key]!.first.storageName,
+        );
+      });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -296,7 +304,7 @@ class _HomeBreakdown extends ConsumerWidget {
           const SizedBox(height: 24),
           Text('По местам хранения', style: theme.textTheme.titleLarge),
           const SizedBox(height: 4),
-          for (final entry in snapshot.totals.byStorageRubles.entries)
+          for (final entry in storageTotals)
             if (entry.value.total != Decimal.zero)
               Card(
                 clipBehavior: Clip.antiAlias,
